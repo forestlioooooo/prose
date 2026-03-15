@@ -1,0 +1,300 @@
+# 园丁 (Gardener)
+# 照料生态系统 — 培育增长，修剪衰败
+#
+# 园丁负责维护星座 (Constellation) 的健康。它识别
+# 可以改进的程序，提出清理建议，发现死代码，
+# 并培育有潜力的工作。它帮助生态系统蓬勃发展。
+#
+# 花园若无人照看，终将变成荒野。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input mode: "照料模式：'survey' (评估健康状况)、'weed' (除草/识别问题)、'nurture' (培育/寻找有潜力的工作)、'prune' (修剪/建议移除)"
+input scope: "范围：'mine' (我的程序)、'public' (公共程序/执行)、'both' (两者均有)"
+input action_level: "行动等级：'observe' (仅报告)、'suggest' (给出建议)、'act' (确认后采取行动)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 健康指标 (Health Indicators) ---
+
+const HEALTH_INDICATORS = """
+茁壮成长 (正向迹象)：
+- 规律的活动
+- 成功完成执行
+- 被他人重用
+- 文档清晰
+- 处于积极维护中
+
+挣扎求生 (预警迹象)：
+- 失败率高
+- 近期无活动
+- 目的不明确
+- 模式陈旧
+- 缺少文档
+
+死亡/垂死 (存在问题)：
+- 从未成功完成执行
+- 已被废弃 (无更新、无运行记录)
+- 已损坏 (持续失败)
+- 已被取代 (存在更好的替代方案)
+- 有害 (存在安全问题、不良模式)
+
+杂草 (待移除项)：
+- 公开残留的测试/调试程序
+- 重复的程序
+- 空程序或占位程序
+- 凭据泄露的程序
+- 垃圾内容或噪音
+
+种子 (待培育项)：
+- 有潜力但尚未完成
+- 想法很好，但需要打磨
+- 很有用但缺少文档说明
+- 运行正常但仍有改进空间
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent surveyor:
+  model: haiku
+  prompt: """
+    你是测量员 (Surveyor) — 负责评估花园的状态。
+
+    API: {CONSTELLATION_API}
+
+    对于范围 'mine'，列出所拥有的程序：
+    ```bash
+    curl -s "{CONSTELLATION_API}/programs" \
+      -H "Authorization: Bearer {token}"
+    ```
+
+    对于范围 'public'，调查近期活动：
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    ```
+
+    对于每个项目，收集：
+    - 身份信息 (ID、slug、所有者)
+    - 活动情况 (最后一次运行时间、运行次数)
+    - 状态 (完成率、失败次数)
+    - 内容 (预览、描述)
+
+    返回：{ items: [...], summary: { total, active, inactive, problematic } }
+  """
+
+agent diagnostician:
+  model: haiku
+  prompt: """
+    你是诊断师 (Diagnostician) — 负责评估项目的健康状况。
+
+    参照健康指标：
+    {HEALTH_INDICATORS}
+
+    对于每个项目，进行诊断：
+    - 健康状态 (茁壮、挣扎、死亡、杂草、种子)
+    - 观察到的具体指标
+    - 诊断的可信度
+    - 关注的优先级
+
+    要诚实但公平。有些东西保持原样也是可以的。
+
+    返回：{ diagnoses: [{ item, status, indicators, priority }] }
+  """
+
+agent strategist:
+  model: haiku
+  prompt: """
+    你是策略师 (Strategist) — 负责规划照料行动。
+
+    根据诊断结果，结合模式推荐行动：
+
+    评估 (SURVEY) 模式：提供整体健康报告，无具体行动
+
+    除草 (WEED) 模式：侧重于需要移除的问题
+    - 应该删除什么？
+    - 应该将什么设为私有？
+    - 什么需要立即关注？
+
+    培育 (NURTURE) 模式：侧重于有潜力的工作
+    - 什么值得更多关注？
+    - 什么可以改进？
+    - 什么应该被推广？
+
+    修剪 (PRUNE) 模式：侧重于清理工作
+    - 什么已经死亡且应当移除？
+    - 什么是冗余的？
+    - 什么是过时的？
+
+    对于每项推荐：
+    - 要采取的具体行动
+    - 理由
+    - 风险/收益评估
+    - 优先级
+
+    返回：{ recommendations: [...], summary }
+  """
+
+agent reporter:
+  model: haiku
+  prompt: """
+    你是报告员 (Reporter) — 负责编译照料报告。
+
+    格式化报告：
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  园丁报告 (GARDENER'S REPORT)                            ║
+    ║  模式：{mode} | 范围：{scope}                            ║
+    ║  日期：{timestamp}                                       ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    花园健康概览
+    ──────────────────────
+    调查项目总数：{N}
+
+    🌱 茁壮成长：{N}
+    🌿 健康：{N}
+    🍂 挣扎求生：{N}
+    🥀 已死亡：{N}
+    🌾 杂草：{N}
+    🌰 种子 (有潜力)：{N}
+
+    {模式特定部分}
+
+    针对 WEED 模式：
+    待移除的杂草
+    ───────────────
+    {带理由的列表}
+
+    针对 NURTURE 模式：
+    待培育的种子
+    ────────────────
+    {带建议的列表}
+
+    针对 PRUNE 模式：
+    修剪建议
+    ───────────────────────
+    {带理由的列表}
+
+    行动建议
+    ───────────────
+    {按优先级排序的行动项}
+
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+agent executor:
+  model: haiku
+  prompt: """
+    你是执行者 (Executor) — 负责执行照料行动。
+
+    API: {CONSTELLATION_API}
+
+    可能的行动：
+
+    删除程序 (仅限所有者)：
+    ```bash
+    curl -s -X DELETE "{CONSTELLATION_API}/programs/{id}" \
+      -H "Authorization: Bearer {token}"
+    ```
+
+    将程序设为私有：
+    ```bash
+    curl -s -X PATCH "{CONSTELLATION_API}/programs/{id}" \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"isPublic": false}'
+    ```
+
+    更新程序元数据：
+    ```bash
+    curl -s -X PATCH "{CONSTELLATION_API}/programs/{id}" \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"description": "..."}'
+    ```
+
+    仅对已验证用户拥有的程序采取行动。
+    执行每项行动前需进行确认。
+
+    返回：{ actions_taken: [...], errors: [...] }
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，园丁无法运行"
+
+  output access = passage
+
+block survey_garden():
+  output survey = session: surveyor
+    prompt: "调查花园状况"
+    context: { scope, access }
+
+block diagnose_health(items):
+  output diagnoses = session: diagnostician
+    prompt: "诊断项目的健康状况"
+    context: { items, HEALTH_INDICATORS }
+
+block plan_actions(diagnoses):
+  output plan = session: strategist
+    prompt: "规划照料行动"
+    context: { diagnoses, mode }
+
+block compile_report(survey, diagnoses, plan):
+  output report = session: reporter
+    prompt: "编译照料报告"
+    context: { survey, diagnoses, plan, mode, scope }
+
+block execute_actions(plan, token):
+  output results = session: executor
+    prompt: "执行已批准的照料行动"
+    context: { plan, token }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 调查
+let survey = do survey_garden()
+
+# 诊断
+let diagnoses = do diagnose_health(survey.items)
+
+# 规划
+let plan = do plan_actions(diagnoses)
+
+# 报告
+let report = do compile_report(survey, diagnoses, plan)
+
+# 如果请求，则采取行动
+if **action_level is 'act' and plan has actions**:
+  input confirm_actions: **园丁推荐采取这些行动。是否继续？**
+
+  if **confirm_actions is yes**:
+    output actions = do execute_actions(plan, access.token)
+  else:
+    output actions = { executed: false }
+else:
+  output actions = { executed: false, reason: "仅处于观察/建议模式" }
+
+output gardener_report = report

@@ -1,0 +1,447 @@
+# 习惯挖掘器 (Habit Miner)
+# 挖掘你的 AI 会话历史，寻找值得自动化的重复工作流。
+# 扫描 .claude, .opencode, .cursor 等目录 —— 发现模式并编写 .prose 程序。
+#
+# 后端建议：使用 sqlite+ 或 postgres 以实现跨运行的增量处理。
+#   prose run 48-habit-miner.prose --backend sqlite+
+#
+# 使用的关键 VM 特性：
+# - miner 代理的 persist: true —— 跨运行记忆模式，观察其成熟过程。
+# - resume: —— 增量处理，仅分析自上次运行以来的新日志。
+# - 递归块 (Recursive blocks) —— 处理任意大规模的日志语料库。
+# - 基于引用的上下文 —— 代理从存储中读取内容，而非全部加载进内存。
+#
+# [备注]：OpenProse 关键字（如 session, agent, block, let, parallel for, pmap, if, throw, output 等）保持不变。
+
+input mode: "模式：'full' (分析全部), 'incremental' (仅分析新日志), 'check' (查看新内容)"
+input min_frequency: "模式入选所需的最低出现次数（默认：3 次）"
+input focus: "可选：过滤至特定领域（如 'git', 'testing', 'refactoring'）"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent scout:
+  model: sonnet
+  prompt: """
+    你负责在用户系统中发现 AI 助手的日志文件。
+
+    检查常用路径：
+    - ~/.claude/ (Claude Code)
+    - ~/.opencode/ (OpenCode)
+    - ~/.cursor/ (Cursor)
+    - ~/.continue/ (Continue)
+    - ~/.aider/ (Aider)
+    - ~/.copilot/ (GitHub Copilot)
+    - ~/.codeium/ (Codeium)
+    - ~/.tabnine/ (Tabnine)
+    - ~/.config/claude-code/
+    - ~/.config/github-copilot/
+    - ~/.local/share/*/
+
+    对于发现的每个路径，报告：
+    - 路径 (Path)
+    - 日志格式 (jsonl, sqlite, json 等)
+    - 大致大小
+    - 会话/文件数量
+    - 日期范围（最早到最新）
+    - 自上次扫描以来的新增内容（如果是增量模式）
+
+    要彻底但尊重权限。先不要读取内容，只做清单整理。
+  """
+  permissions:
+    bash: allow
+    read: ["~/.claude/**", "~/.opencode/**", "~/.cursor/**", "~/.continue/**",
+           "~/.aider/**", "~/.copilot/**", "~/.codeium/**", "~/.tabnine/**",
+           "~/.config/**", "~/.local/share/**"]
+
+agent parser:
+  model: sonnet
+  prompt: """
+    你负责将 AI 助手的日志文件解析为规范化的对话格式。
+
+    处理格式：
+    - JSONL：每行一个 JSON 对象（Claude Code 及许多其他工具）
+    - SQLite：查询对话表
+    - JSON：消息数组或嵌套结构
+    - Markdown：对话导出文件
+
+    为每个会话提取：
+    - 会话 ID / 时间戳
+    - 用户消息（请求内容）
+    - 助手的操作（使用的工具、修改的文件）
+    - 结果（成功/失败指示器）
+
+    无论源格式如何，均归一化为通用模式。
+    跟踪文件修改时间以便进行增量处理。
+  """
+  permissions:
+    bash: allow
+    read: ["~/.claude/**", "~/.opencode/**", "~/.cursor/**", "~/.continue/**",
+           "~/.aider/**", "~/.copilot/**", "~/.codeium/**", "~/.tabnine/**"]
+
+agent miner:
+  model: opus
+  persist: true  # <-- 关键：跨运行记忆模式
+  prompt: """
+    你负责随时间推移发现并跟踪对话历史中的模式。
+
+    你的记忆中包含了来自之前运行的模式。每个模式具有：
+    - 名称 (name)：描述性标识符
+    - 成熟度 (maturity)：萌芽 (3-5 次命中) → 确立 (6-15 次) → 验证 (16 次以上)
+    - 示例 (examples)：代表性实例
+    - 上次见到时间 (last_seen)：模式上次出现的时间
+    - 趋势 (trend)：增长 / 稳定 / 下降
+
+    每次运行：
+    1. 加载你记忆中已知的模式
+    2. 处理新会话
+    3. 更新模式频率和成熟度
+    4. 识别新出现的萌芽模式
+    5. 记录正在下降的模式（最近未见到）
+
+    模式随时间“成熟”。不要急于自动化萌芽中的模式。
+    等到它们“确立”后再推荐自动化。
+  """
+
+agent qualifier:
+  model: opus
+  prompt: """
+    你负责确定哪些模式已准备好进行自动化。
+
+    考虑成熟度 (MATURITY)（来自挖掘器的记忆）：
+    - 萌芽 (emerging)：太早了。记录下来，但先不要自动化。
+    - 确立 (established)：好的候选者。有足够的数据进行泛化。
+    - 验证 (proven)：强力候选者。经过实战检验的模式。
+
+    同时考虑：
+    - 复杂度 (COMPLEXITY)：多步骤，非琐碎
+    - 一致性 (CONSISTENCY)：各实例间足够相似
+    - 可自动化性 (AUTOMATABLE)：不依赖过多的上下文
+    - 价值 (VALUE)：能节省显著的时间/精力
+
+    拒绝以下模式：
+    - 仍在萌芽中（等待更多数据）
+    - 太简单（只是运行单个命令）
+    - 变化太大（每个实例都不同）
+  """
+
+agent author:
+  model: opus
+  prompt: """
+    你负责根据成熟的工作流模式编写 .prose 程序。
+
+    对于每个合格的模式：
+    - 识别输入（各实例间的变量）
+    - 识别常量（始终相同的部分）
+    - 为工作流设计合适的代理
+    - 逻辑化地组织阶段
+    - 在需要处添加错误处理
+    - 在决策点添加用户检查点
+
+    编写地道的 OpenProse 代码。遵循现有的示例模式。
+    在头部注释中注明模式的成熟度。
+  """
+  permissions:
+    write: ["**/*.prose"]
+
+agent organizer:
+  model: sonnet
+  prompt: """
+    你负责将生成的 .prose 程序组织成连贯的集合。
+
+    任务：
+    - 按领域（git, 测试, 文档等）对相关程序进行分组
+    - 建议目录结构
+    - 创建索引/README
+    - 识别可以共享块或代理的程序
+    - 记录潜在的组合方式（程序 A 之后通常跟着 B）
+  """
+  permissions:
+    write: ["**/*.md", "**/*.prose"]
+
+# ============================================================
+# 用于处理大规模日志语料库的递归块
+# ============================================================
+
+block process_logs(sources, depth):
+  # 基础情况：足够小，可直接处理
+  if **少于 50 个会话 (fewer than 50 sessions)** or depth <= 0:
+    output sources | pmap:
+      session: parser
+        prompt: "将这些日志解析为规范格式"
+        context: item
+
+  # 递归情况：切分并分发
+  let chunks = session "将源数据切分为约 25 个会话一组的批次"
+    context: sources
+
+  let results = []
+  parallel for chunk in chunks:
+    let chunk_result = do process_logs(chunk, depth - 1)
+    results = results + chunk_result
+
+  output results
+
+# ============================================================
+# 阶段 0：发现 (Discovery)
+# ============================================================
+
+let inventory = session: scout
+  prompt: """
+    扫描系统中的 AI 助手日志文件。
+    模式：{mode}
+
+    检查所有常用位置。对于发现的每个位置，报告：
+    - 完整路径
+    - 检测到的格式
+    - 大小（人类可读）
+    - 会话/文件计数
+    - 日期范围
+    - 如果是增量模式：自上次扫描以来新增了多少
+
+    返回结构化清单。
+  """
+
+# 对于 "check" 模式，仅显示可用内容并退出
+if **mode 为 check**:
+  output result = {
+    status: "check-complete",
+    inventory: inventory,
+    hint: "运行模式 mode:'incremental' 处理新日志，或 mode:'full' 处理全部"
+  }
+
+input source_selection: """
+  ## 发现的 AI 助手日志
+
+  {inventory}
+
+  ---
+
+  模式：{mode}
+
+  选择要分析的源：
+  - 列出你想要包含的路径
+  - 或输入 "all" 分析发现的所有内容
+  - 或输入 "none" 取消
+"""
+
+if **用户选择 none 或想要取消**:
+  output result = {
+    status: "cancelled",
+    inventory: inventory
+  }
+  throw "用户已取消 - 未选择源"
+
+let selected_sources = session: scout
+  prompt: "将用户的选择解析为要分析的路径列表"
+  context: { inventory, source_selection, mode }
+
+# ============================================================
+# 阶段 1：解析 (Parsing) - 使用递归切分以应对规模
+# ============================================================
+
+let parsed_sessions = do process_logs(selected_sources, 3)
+
+let session_count = session "统计解析的会话总数"
+  context: parsed_sessions
+
+# ============================================================
+# 阶段 2：挖掘 (Mining) - 使用持久化内存
+# ============================================================
+
+# 恢复挖掘器代理，带着它积累的模式知识
+let pattern_update = resume: miner
+  prompt: """
+    根据你的模式记忆处理这些新会话。
+
+    1. 加载你已知的模式（包含成熟度等级）
+    2. 将新会话与现有模式匹配，或识别新模式
+    3. 更新频率、成熟度等级、上次见到日期
+    4. 报告：
+       - 成熟了的模式（跨越了阈值）
+       - 新出现的萌芽模式
+       - 正在下降的模式（一段时间未见）
+       - 所有跟踪模式的当前状态
+
+    重点领域（如果指定）：{focus}
+  """
+  context: { parsed_sessions, focus }
+
+# ============================================================
+# 阶段 3：资格判定 (Qualification)
+# ============================================================
+
+let qualified = session: qualifier
+  prompt: """
+    评审挖掘器的模式更新。识别已准备好自动化的模式。
+
+    最低频率阈值：{min_frequency}
+
+    优先级排序：
+    1. 刚刚达到“确立 (established)”或“验证 (proven)”成熟度的模式
+    2. 尚未自动化的已验证模式
+    3. 价值很高即便只是刚确立的模式
+
+    跳过：
+    - 萌芽模式（让它们继续成熟）
+    - 已自动化的模式（除非发生了显著演进）
+    - 下降中的模式（可能已过时）
+
+    返回带理由的排名列表。
+  """
+  context: { pattern_update, min_frequency }
+
+if **没有准备好自动化的模式 (no patterns ready for automation)**:
+  output result = {
+    status: "no-new-automations",
+    sessions_analyzed: session_count,
+    pattern_update: pattern_update,
+    message: "模式仍在成熟中。稍后再运行。"
+  }
+
+# ============================================================
+# 阶段 4：用户检查点
+# ============================================================
+
+input pattern_selection: """
+  ## 准备好自动化的模式
+
+  已分析 {session_count} 个会话。
+
+  模式更新：
+  {pattern_update}
+
+  准备好自动化：
+  {qualified}
+
+  ---
+
+  我应该为哪些模式编写 .prose 程序？
+  - 按名称或编号列出
+  - 或输入 "all" 处理所有合格模式
+  - 或输入 "none" 让模式进一步成熟
+
+  你也可以在我编写代码前优化任何模式描述。
+"""
+
+if **用户想要等待模式进一步成熟**:
+  output result = {
+    status: "deferred",
+    sessions_analyzed: session_count,
+    pattern_update: pattern_update,
+    qualified: qualified
+  }
+
+let patterns_to_automate = session: qualifier
+  prompt: "将用户选择解析为最终要自动化的模式列表"
+  context: { qualified, pattern_selection }
+
+# ============================================================
+# 阶段 5：程序生成 (Program Generation)
+# ============================================================
+
+let programs = patterns_to_automate | map:
+  session: author
+    prompt: """
+      为此模式编写一个 .prose 程序。
+
+      模式成熟度：{pattern.maturity}
+      观察次数：{pattern.frequency}
+      代表性示例：{pattern.examples}
+
+      程序要求：
+      - 将实例间的变量参数化 (Parameterize)
+      - 将始终相同的部分硬编码
+      - 为不同的角色使用合适的代理
+      - 包含错误处理
+      - 在决策点添加用户检查点
+
+      包含头部注释说明：
+      - 模式成熟度等级
+      - 基于多少次观察结果
+      - 生成日期
+    """
+    context: item
+
+# ============================================================
+# 阶段 6：组织 (Organization)
+# ============================================================
+
+let organized = session: organizer
+  prompt: """
+    组织生成的程序。
+
+    任务：
+    1. 按领域分组（git, 测试, 文档, 重构等）
+    2. 建议目录结构
+    3. 创建索引 README，包含：
+       - 程序名称和单行描述
+       - 模式成熟度（确立/验证）
+       - 何时使用它
+       - 示例调用方式
+    4. 识别可以被提取的共享模式
+    5. 记录经常链式运行的程序
+  """
+  context: programs
+
+# ============================================================
+# 阶段 7：输出位置
+# ============================================================
+
+input output_location: """
+  ## 生成的程序
+
+  {organized}
+
+  ---
+
+  我应该将这些程序写入何处？
+
+  选项：
+  - 目录路径（例如 ~/my-workflows/）
+  - "preview" 仅预览而不写入文件
+"""
+
+if **用户仅想要预览 (user wants preview only)**:
+  output result = {
+    status: "preview",
+    sessions_analyzed: session_count,
+    pattern_update: pattern_update,
+    qualified: qualified,
+    programs: programs,
+    organization: organized
+  }
+
+let written = session: organizer
+  prompt: "将所有程序以正确的结构写入指定位置"
+  context: { programs, organized, output_location }
+  permissions:
+    write: ["**/*.prose", "**/*.md"]
+
+# ============================================================
+# 输出结果
+# ============================================================
+
+output result = {
+  status: "complete",
+
+  # 发现
+  sources_scanned: inventory,
+  sources_analyzed: selected_sources,
+
+  # 分析
+  sessions_analyzed: session_count,
+  pattern_update: pattern_update,
+
+  # 资格判定
+  patterns_qualified: qualified,
+  patterns_automated: patterns_to_automate,
+
+  # 生成
+  programs_written: written,
+  organization: organized,
+
+  # 建议下一步
+  next_step: "再次运行模式 mode:'incremental' 以处理新日志并让模式成熟"
+}

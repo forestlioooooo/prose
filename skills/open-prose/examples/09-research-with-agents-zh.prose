@@ -1,0 +1,31 @@
+# 使用专门代理的研究管道
+# 这个示例演示了如何定义具有不同模型的代理
+# 并在会话中使用属性覆盖
+
+# 第一步：定义专门的代理
+# agent 关键字定义了一个可重用的代理配置
+# 每个代理可以指定模型和系统提示
+agent researcher:
+  model: sonnet
+  prompt: "你是一个擅长查找和综合信息的研究助手"
+
+agent writer:
+  model: opus
+  prompt: "你是一个技术文档编写者，能够创建清晰、简洁的文档"
+
+# 第二步：使用 researcher 代理进行初步研究
+# session: researcher 表示使用之前定义的 researcher 代理
+# 但可以覆盖其属性，如模型和提示
+session: researcher
+  prompt: "研究可再生能源存储技术的最新发展"
+
+# 第三步：使用更强大的模型进行深入分析
+# 这里覆盖了 researcher 代理的模型，使用 opus 而不是 sonnet
+session: researcher
+  model: opus
+  prompt: "分析前3种最有前景的电池技术及其潜在影响"
+
+# 第四步：撰写发现总结
+# 使用 writer 代理创建适合高管的总结报告
+session: writer
+  prompt: "创建一份适合高管的研究发现总结报告"

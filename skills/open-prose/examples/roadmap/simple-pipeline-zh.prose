@@ -1,0 +1,22 @@
+# 简单管道示例 (Simple Pipeline Example)
+# 研究一个主题，然后编写文章
+#
+# [备注]：OpenProse 关键字（如 import, agent, session, -> 等）保持不变。
+# 该示例属于路线图 (Roadmap) 计划中的特性，目前可能无法运行。
+
+import "web-search" from "github:example/web-search"
+
+agent researcher:
+  model: sonnet
+  skills: ["web-search"]
+
+agent writer:
+  model: opus
+
+# 研究阶段
+session research: researcher
+  prompt: "研究量子计算的最新进展"
+
+# 管道流向：编写阶段
+-> session article: writer
+  prompt: "编写一篇关于量子计算的博文"

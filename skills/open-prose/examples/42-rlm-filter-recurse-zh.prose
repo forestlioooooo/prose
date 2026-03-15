@@ -1,0 +1,57 @@
+# RLM: 过滤与递归 (Filter and Recurse)
+# 在昂贵的深度分析前进行廉价的筛选
+#
+# [备注]：该模式在“大海捞针”式的任务中非常有效。
+# OpenProse 关键字（如 session, agent, block, let, pmap, if 等）保持不变。
+
+input documents: "要搜索的文档集合"
+input question: "需要多方证据支持的问题"
+
+agent screener:
+  model: haiku
+  prompt: "快速相关性检查。宁可包含，不可漏掉。"
+
+agent investigator:
+  model: opus
+  prompt: "深度分析。提取带引用的具体证据。"
+
+agent reasoner:
+  model: opus
+  prompt: "将证据综合成答案。链式推理。注明来源。"
+
+# 搜索递归块
+block search(docs, q, depth):
+  # 基础情况：文档为空或达到最大深度
+  if **文档集合为空 (docs is empty)** or depth <= 0:
+    output []
+
+  # 阶段 1：快速筛选
+  let relevant = session: screener
+    prompt: "寻找与以下问题相关的文档：{q}"
+    context: docs
+
+  # 阶段 2：深度调查（并行处理）
+  let evidence = relevant | pmap:
+    session: investigator
+      prompt: "为以下问题提取证据：{q}"
+      context: item
+
+  # 阶段 3：缺口分析
+  let gaps = session "针对 '{q}'，哪些方面仍然缺乏证据？"
+    context: evidence
+
+  # 阶段 4：如果存在重大缺口，递归搜索
+  if **仍然存在重大缺口 (significant gaps remain)**:
+    let refined = session "优化查询以针对以下缺口：{gaps}"
+    let more = do search(docs, refined, depth - 1)
+    output evidence + more
+
+  output evidence
+
+# 启动搜索，最大深度为 3
+let all_evidence = do search(documents, question, 3)
+
+# 阶段 5：最终推理
+output answer = session: reasoner
+  prompt: "最终回答问题：{question}"
+  context: all_evidence

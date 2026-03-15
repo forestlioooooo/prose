@@ -1,0 +1,25 @@
+# 并行代码审查
+# 同时运行多个专门的审查
+
+# 定义审查代理
+# 备注：单个代理可以处理多种审查类型，通过不同提示区分任务
+agent reviewer:
+  model: sonnet
+  prompt: "你是一名专家级代码审查员"
+
+# 并行运行所有审查
+# 备注：parallel 块允许多个会话同时执行，显著提高效率
+# 每个并行任务可以捕获输出到变量，便于后续使用
+parallel:
+  security = session: reviewer
+    prompt: "审查安全漏洞"
+  perf = session: reviewer
+    prompt: "审查性能问题"
+  style = session: reviewer
+    prompt: "审查代码风格和可读性"
+
+# 综合所有审查结果
+# 备注：context 字段可以使用对象语法传递多个变量
+# 并行执行后，将结果汇总生成统一报告
+session "创建统一的代码审查报告"
+  context: { security, perf, style }

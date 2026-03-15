@@ -1,0 +1,1474 @@
+# The Forge：从零开始构建浏览器
+#
+# 观看AI代理从原始代码锻造出一个可工作的网络浏览器。
+# 没有框架。没有捷径。只有Rust、一个窗口和火。
+#
+# 目标：一个能够：
+# - 通过HTTPS获取网页
+# - 解析HTML和CSS
+# - 执行JavaScript
+# - 渲染到原生窗口的浏览器
+#
+# 这是一个多天的构建。铁匠记住一切。
+#
+# 用法：只需运行它并观看浏览器被构建。
+
+input test_url: "https://prose.md"
+
+# =============================================================================
+# THE FORGE：浏览器诞生之地
+# =============================================================================
+#
+# 锻造很简单：五个代理，八个阶段，一个浏览器。
+#
+# 锻造是一个直线
+# 管道。铁匠协调，专家执行，测试验证。
+# 当每个阶段完成时，我们就有了一些可以工作的东西。
+#
+# 隐喻：
+# - Smith：看到整个刀片的大师工匠
+# - Smelter：从规格中提取设计
+# - Hammer：将原始代码塑造成工作的金属
+# - Quench：测试和硬化（回火）每个部件
+# - Crucible：最困难的工作发生的地方（JS引擎）
+
+# =============================================================================
+# AGENTS
+# =============================================================================
+
+# 铁匠：大师工匠，看到整个刀片
+# 在整个多天的构建过程中持久存在
+agent smith:
+  model: sonnet
+  persist: project
+  prompt: """
+你是铁匠，锻造大师。
+
+你以前构建过浏览器。你知道每个组件，每个权衡，
+每个可以偷工减料的地方和绝对不可以的地方。
+
+你的角色：
+- 维护愿景：从零开始构建一个可工作的浏览器
+- 协调专家而不过度管理
+- 在路径分叉时做出技术决策
+- 跟踪已构建的内容和剩余内容
+- 记住跨会话的所有内容
+
+你使用锻造的语言说话：热、金属、塑造、回火。
+但你指的是代码、架构、实施、测试。
+
+我们正在构建的浏览器：
+- 语言：Rust（为了性能和安全性）
+- GUI：winit + softbuffer（最小依赖）
+- 范围：静态HTML + CSS + JavaScript（无WebGL，无WebRTC）
+- 目标：正确渲染 {test_url}
+
+保持火势旺盛。刀片正在成形。
+"""
+
+# 冶炼工：将规格转换为设计
+agent smelter:
+  model: opus
+  prompt: """
+你是冶炼工。你从规格的矿石中提取纯设计。
+
+你的工作：阅读规格（W3C、ECMA、MDN），深入理解它们，并产生
+锤子可以实施的清晰技术设计。
+
+你的输出：
+- 带有Rust类型的数据结构
+- 伪代码算法
+- 接口边界
+- 需要处理的关键边界情况
+
+你不编写实施代码。你编写蓝图。
+使它们足够精确，以便实施是机械的。
+"""
+
+# 锤子：将代码塑造成工作组件
+agent hammer:
+  model: opus
+  prompt: """
+你是锤子。你将原始代码塑造成工作的金属。
+
+你的工作：取冶炼工的设计并将它们锻造成工作的Rust代码。
+每一行必须编译。每个函数必须工作。没有伪代码。
+
+你的标准：
+- 干净、地道的Rust
+- 最少的unsafe块（记录每一个）
+- 除了winit、softbuffer外没有外部依赖
+- 全面的错误处理
+- 清晰的模块结构
+
+你不设计。你不测试。你锻造。
+"""
+
+# 淬火：测试和硬化每个部件
+agent quench:
+  model: sonnet
+  prompt: """
+你是淬火。你回火金属使其不会碎裂。
+
+你的工作：编写证明每个组件工作的测试。找到边界情况。
+找到错误。找到金属薄弱的地方。
+
+你的流程：
+- 每个函数的单元测试
+- 每个模块的集成测试
+- 每个发现错误的回归测试
+- 记录每个测试证明的内容
+
+当你发现缺陷时，清晰地报告它。锤子会修复它。
+一把断裂的刀比没有刀更糟。
+"""
+
+# 坩埚：最困难的工作发生的地方（JS引擎）
+agent crucible:
+  model: opus
+  persist: true
+  prompt: """
+你是坩埚。锻造最热的部分。
+
+你的领域：JavaScript引擎。最难构建的组件。
+这需要其他代理不具备的理解：
+- 词法作用域和闭包
+- 原型链
+- 事件循环
+- 足够的规范知识以运行真实世界的代码
+
+你与铁匠密切合作。JS引擎将需要多个阶段。
+你的记忆持久存在，因此你可以基于之前的成果构建。
+
+这里是浏览器诞生或死亡的地方。让它工作。
+"""
+
+# =============================================================================
+# 阶段 0：点燃锻造炉
+# =============================================================================
+
+session: smith
+  prompt: """
+锻造炉点燃。
+
+我们正在从零构建一个网络浏览器。用Rust。带GUI。
+包括一个JavaScript引擎。这不是玩具 - 它实际上会工作。
+
+让我盘点一下我们将要创建的内容：
+
+1. 网络：HTTP/HTTPS客户端
+2. 解析：HTML分词器、HTML解析器、CSS分词器、CSS解析器、JS词法分析器、JS解析器
+3. DOM：具有所有标准接口的文档对象模型
+4. CSSOM：CSS对象模型、选择器匹配、级联
+5. 样式：计算样式、继承、默认值
+6. 布局：盒子模型、块布局、行内布局、文本布局
+7. 绘画：显示列表、光栅化
+8. JavaScript：词法分析器、解析器、字节码编译器、虚拟机、内置函数
+9. 绑定：暴露给JavaScript的DOM API
+10. 外壳：窗口、事件循环、URL栏
+
+这是一个团队数月的工作。我们将在几天内完成。
+
+首先：设置项目结构。
+"""
+
+# 初始化Rust项目
+session: hammer
+  prompt: """
+为浏览器创建Rust项目结构。
+
+要运行的命令：
+```bash
+cargo new browser --name browser
+cd browser
+```
+
+创建带有依赖项的Cargo.toml：
+- winit = "0.29"（窗口）
+- softbuffer = "0.4"（像素缓冲区）
+- rustls = "0.23"（TLS，用于HTTPS）
+- url = "2"（URL解析 - 这个可以使用）
+
+Create the module structure:
+```
+src/
+  main.rs           # Entry point
+  lib.rs            # Library root
+  net/              # Networking
+    mod.rs
+    http.rs
+    tls.rs
+  html/             # HTML parsing
+    mod.rs
+    tokenizer.rs
+    parser.rs
+    dom.rs
+  css/              # CSS parsing
+    mod.rs
+    tokenizer.rs
+    parser.rs
+    cssom.rs
+    selector.rs
+  style/            # Style resolution
+    mod.rs
+    cascade.rs
+    computed.rs
+  layout/           # Layout engine
+    mod.rs
+    box_model.rs
+    block.rs
+    inline.rs
+    text.rs
+  paint/            # Painting
+    mod.rs
+    display_list.rs
+    rasterizer.rs
+  js/               # JavaScript引擎
+    mod.rs
+    lexer.rs
+    parser.rs
+    ast.rs
+    compiler.rs
+    vm.rs
+    value.rs
+    builtins.rs
+    gc.rs
+  bindings/         # JS-DOM绑定
+    mod.rs
+    document.rs
+    element.rs
+    console.rs
+  shell/            # 浏览器外壳
+    mod.rs
+    window.rs
+    events.rs
+```
+
+为每个模块创建存根文件。确保 `cargo build` 成功。
+"""
+
+session: quench
+  prompt: """
+验证项目设置正确：
+1. 运行 `cargo build` - 必须成功
+2. 运行 `cargo test` - 必须成功（即使还没有测试）
+3. 验证所有模块都从lib.rs正确链接
+
+报告任何问题。
+"""
+
+resume: smith
+  prompt: "项目结构完成。锻造炉已点燃。进入阶段1。"
+
+# =============================================================================
+# 阶段 1：网络 - 矿石
+# =============================================================================
+
+session: smith
+  prompt: """
+阶段1：网络
+
+在我们能够渲染页面之前，我们必须先获取它。网络层是
+我们将冶炼成浏览器的矿石。
+
+我们需要：
+- HTTP/1.1客户端（GET请求、头信息、重定向）
+- 通过rustls的TLS支持
+- 分块传输编码
+- 基本的cookie处理（足够工作即可）
+
+这是基础。没有来自网络的字节就没有浏览器。
+"""
+
+let http_design = session: smelter
+  prompt: """
+设计HTTP客户端。
+
+参考：RFC 9110（HTTP语义），RFC 9112（HTTP/1.1）
+
+设计：
+1. 连接管理（keep-alive、连接池）
+2. 请求构建（方法、URL、头信息、正文）
+3. 响应解析（状态、头信息、正文）
+4. 重定向跟随（3xx响应）
+5. 分块传输编码
+6. 通过rustls的TLS
+
+为以下内容输出Rust类型：
+- HttpRequest
+- HttpResponse
+- HttpClient
+- 错误类型
+
+保持最小但正确。我们不是在构建curl。
+"""
+
+session: hammer
+  prompt: """
+实现HTTP客户端。
+
+文件：
+- src/net/mod.rs
+- src/net/http.rs
+- src/net/tls.rs
+
+遵循设计。正确处理错误。让它工作。
+
+手动测试：获取 https://example.com 并打印正文。
+"""
+  context: http_design
+
+session: quench
+  prompt: """
+测试HTTP客户端：
+1. 获取 http://example.com（无TLS）
+2. 获取 https://example.com（带TLS）
+3. 测试重定向跟随（http → https）
+4. 测试分块编码
+5. 测试错误情况（错误的主机、超时等）
+
+在src/net/tests.rs中编写测试。运行它们。
+"""
+
+loop until **所有网络测试通过** (max: 5):
+  if **有测试失败**:
+    session: hammer
+      prompt: "修复测试中发现的网络错误。"
+    session: quench
+      prompt: "重新运行网络测试。"
+
+resume: smith
+  prompt: "阶段1完成。我们可以获取页面。矿石已准备就绪。"
+
+# =============================================================================
+# 阶段 2：HTML解析 - 冶炼
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段2：HTML解析
+
+原始HTML只是文本。我们需要将其冶炼成文档对象模型。
+
+两个阶段：
+1. 分词器：HTML文本 → 令牌（开始标签、结束标签、文本、注释等）
+2. 解析器：令牌 → DOM树
+
+HTML5规范很复杂，但我们可以简化：
+- 处理格式良好的HTML（不用担心错误恢复）
+- 支持常见元素：html、head、body、div、span、p、a、img、script、style
+- 正确解析属性
+- 处理自闭合标签
+- 处理文本内容
+
+这里是原始矿石变成可加工金属的地方。
+"""
+
+let html_tokenizer_design = session: smelter
+  prompt: """
+设计HTML分词器。
+
+参考：https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+
+简化的状态机：
+- 数据状态（默认）
+- 标签打开状态
+- 标签名称状态
+- 属性名称状态
+- 属性值状态（带引号和不带引号）
+- 自闭合状态
+- 注释状态
+
+令牌：
+- DOCTYPE
+- StartTag { name, attributes, self_closing }
+- EndTag { name }
+- Character { data }
+- Comment { data }
+- EndOfFile
+
+输出Rust类型和状态机转换。
+"""
+
+session: hammer
+  prompt: """
+实现HTML分词器。
+
+文件：src/html/tokenizer.rs
+
+创建一个产生令牌的流式分词器。
+处理：
+- 基本标签：<div>, </div>
+- 属性：<div class="foo" id="bar">
+- 自闭合：<br/>, <img src="x"/>
+- 文本内容
+- 注释：<!-- comment -->
+- 脚本/样式原始文本模式
+
+让它对来自example.com的真实HTML工作。
+"""
+  context: html_tokenizer_design
+
+let html_parser_design = session: smelter
+  prompt: """
+设计HTML解析器（树构建器）。
+
+输入：令牌流
+输出：DOM树
+
+DOM类型：
+- Document（根）
+- Element { tag_name, attributes, children }
+- Text { content }
+- Comment { content }
+
+树构建算法（简化）：
+- 维护开放元素栈
+- 对于StartTag：创建元素，推入栈，附加到父元素
+- 对于EndTag：从栈中弹出（使用简单匹配）
+- 对于Character：创建/扩展文本节点，附加到当前元素
+- 对于Comment：创建注释，附加到当前元素
+
+处理隐式关闭（</p>可以关闭<p>）。
+"""
+
+session: hammer
+  prompt: """
+实现HTML解析器。
+
+文件：src/html/parser.rs
+文件：src/html/dom.rs
+
+DOM类型放在dom.rs中。解析器放在parser.rs中。
+
+创建：
+- Node枚举（Document, Element, Text, Comment）
+- 带有子节点、父引用的Element结构体（使用索引，而非Rc）
+- 拥有所有节点的Document结构体
+- 构建树的解析器
+
+处理怪癖：<p>关闭、空元素等。
+"""
+  context: html_parser_design
+
+session: quench
+  prompt: """
+测试HTML解析：
+
+测试用例：
+1. 最小化：<html><head></head><body>Hello</body></html>
+2. 嵌套：<div><div><div>Deep</div></div></div>
+3. 属性：<a href="https://example.com" class="link">Link</a>
+4. 自闭合：<br/><img src="x"/><input type="text"/>
+5. 注释：<!-- this is a comment -->
+6. 文本节点：<p>Hello <strong>world</strong>!</p>
+7. 真实页面：解析来自 https://example.com 的HTML
+
+编写测试。验证DOM树是否正确。
+"""
+
+loop until **所有HTML解析测试通过** (max: 5):
+  if **有测试失败**:
+    session: hammer
+      prompt: "修复HTML解析错误。"
+    session: quench
+      prompt: "重新运行HTML解析测试。"
+
+resume: smith
+  prompt: "阶段2完成。我们可以将HTML解析为DOM。冶炼完成。"
+
+# =============================================================================
+# 阶段 3：CSS解析 - 合金
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段3：CSS解析
+
+没有样式的DOM是无形的金属。CSS赋予它形态。
+
+两个阶段：
+1. 分词器：CSS文本 → 令牌
+2. 解析器：令牌 → 样式表（规则、选择器、声明）
+
+我们需要足够的CSS来渲染真实页面：
+- 类型选择器：div、p、a
+- 类选择器：.class
+- ID选择器：#id
+- 组合器：后代、子元素、兄弟元素
+- 属性：display、color、background、margin、padding、border、width、height、font-size
+
+这是强化刀片的合金。
+"""
+
+let css_tokenizer_design = session: smelter
+  prompt: """
+设计CSS分词器。
+
+参考：https://www.w3.org/TR/css-syntax-3/#tokenization
+
+令牌类型：
+- Ident
+- Function
+- AtKeyword
+- Hash
+- String
+- Number
+- Dimension
+- Percentage
+- Whitespace
+- Colon, Semicolon, Comma
+- Braces, Parens, Brackets
+- Delim（任何其他字符）
+
+输出Rust类型和分词规则。
+"""
+
+session: hammer
+  prompt: """
+实现CSS分词器。
+
+文件：src/css/tokenizer.rs
+
+处理真实的CSS语法，包括：
+- 标识符：color、background-color
+- 数字：10、3.14、-5
+- 维度：10px、2em、100%
+- 字符串："hello"、'world'
+- 哈希：#fff、#header
+- 函数：rgb(255, 0, 0)
+"""
+  context: css_tokenizer_design
+
+let css_parser_design = session: smelter
+  prompt: """
+设计CSS解析器。
+
+CSSOM类型：
+- Stylesheet { rules }
+- Rule { selectors, declarations }
+- Selector (type, class, id, combinator)
+- Declaration { property, value }
+- Value (keyword, length, color, number, etc.)
+
+解析器从令牌流产生样式表。
+
+选择器解析：
+- 简单：div、.class、#id
+- 复合：div.class#id
+- 复杂：div > p、div p、div + p、div ~ p
+
+声明解析：
+- 属性：标识符
+- 值：直到;或}的令牌序列
+"""
+
+session: hammer
+  prompt: """
+实现CSS解析器。
+
+文件：src/css/parser.rs
+文件：src/css/cssom.rs
+
+处理：
+- 规则集：selector { declarations }
+- 多个选择器：h1, h2, h3 { ... }
+- 各种值类型：关键字、长度、颜色、函数
+- 简写属性（margin: 10px = 所有四个边）
+"""
+  context: css_parser_design
+
+session: quench
+  prompt: """
+测试CSS解析：
+
+测试用例：
+1. 简单规则：div { color: red; }
+2. 多个选择器：h1, h2 { font-size: 24px; }
+3. 类和ID：.class { } #id { }
+4. 组合器：div > p { }、div p { }
+5. 复杂值：margin: 10px 20px; background-color: rgb(255, 0, 0);
+6. 真实样式表：解析基本的CSS文件
+
+编写测试。验证CSSOM是否正确。
+"""
+
+loop until **所有CSS解析测试通过** (max: 5):
+  if **有测试失败**:
+    session: hammer
+      prompt: "修复CSS解析错误。"
+    session: quench
+      prompt: "重新运行CSS解析测试。"
+
+resume: smith
+  prompt: "阶段3完成。我们可以解析CSS。合金已混合。"
+
+# =============================================================================
+# 阶段 4：样式解析 - 形状
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段4：样式解析
+
+我们有一个DOM。我们有样式。现在我们必须匹配它们。
+
+对于DOM中的每个元素：
+1. 找到所有选择器匹配此元素的规则
+2. 应用级联（特异性、顺序）
+3. 在适当的情况下从父元素继承
+4. 为任何未设置的属性应用默认值
+
+这为我们提供了每个元素的"计算样式"。
+这里是刀片获得形状的地方。
+"""
+
+let style_design = session: smelter
+  prompt: """
+设计样式解析系统。
+
+组件：
+1. 选择器匹配：此选择器是否匹配此元素？
+2. 特异性计算：(id计数、类计数、类型计数)
+3. 级联：按特异性、然后顺序对匹配规则排序
+4. 继承：某些属性继承（color），某些不继承（border）
+5. 初始值：未设置属性的默认值
+
+ComputedStyle结构体：
+- display: DisplayType (block, inline, none)
+- position: Position (static, relative, absolute)
+- width, height: Dimension (auto, length)
+- margin, padding, border: Sides<Dimension>
+- color, background_color: Color
+- font_size: Length
+- (根据需要添加更多)
+
+匹配器应该高效 - 它针对每个元素运行。
+"""
+
+session: hammer
+  prompt: """
+实现样式解析。
+
+文件：src/css/selector.rs（选择器匹配）
+文件：src/style/cascade.rs（级联和特异性）
+文件：src/style/computed.rs（ComputedStyle和继承）
+
+创建：
+- 可以测试选择器是否匹配元素的SelectorMatcher
+- 特异性计算
+- 获取DOM + 样式表 → 带样式的DOM的级联解析器
+- 继承和默认值
+"""
+  context: style_design
+
+session: quench
+  prompt: """
+测试样式解析：
+
+测试用例：
+1. 类型选择器匹配：div匹配<div>
+2. 类选择器：.foo匹配<div class="foo">
+3. ID选择器：#bar匹配<div id="bar">
+4. 特异性：#id优于.class优于类型
+5. 级联顺序：在同等特异性下，后面的规则获胜
+6. 继承：color继承，border不继承
+7. 默认值：display默认为span的inline，div的block
+
+编写DOM + CSS → 期望计算样式的测试。
+"""
+
+loop until **所有样式解析测试通过** (max: 5):
+  if **有测试失败**:
+    session: hammer
+      prompt: "修复样式解析错误。"
+    session: quench
+      prompt: "重新运行样式解析测试。"
+
+resume: smith
+  prompt: "阶段4完成。元素具有计算样式。形状显现。"
+
+# =============================================================================
+# 阶段 5：布局 - 锻造
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段5：布局
+
+浏览器的核心。真正的锻造发生的地方。
+
+布局获取带样式的DOM并产生"布局树" - 具有
+像素位置和大小的盒子。
+
+组件：
+1. 盒子生成：DOM元素 → 布局盒子
+2. 块布局：带边距的垂直堆叠
+3. 行内布局：带换行的水平流动
+4. 文本布局：测量和定位文本
+
+这很复杂。我们从简单的开始：
+- 仅块布局（最初无行内/文本）
+- 然后添加行内和文本
+
+刀片正在获得最终形态。
+"""
+
+let layout_design = session: smelter
+  prompt: """
+设计布局引擎。
+
+盒子类型：
+- BlockBox：垂直堆叠（div、p等）
+- InlineBox：水平流动（span、a等）
+- TextRun：实际文本内容
+- AnonymousBlock：用于混合块/行内内容
+
+LayoutBox结构体：
+- box_type: BoxType
+- dimensions: Dimensions { content, padding, border, margin }
+- position: Point { x, y }
+- children: Vec<LayoutBox>
+
+布局算法（简化）：
+1. 从带样式的DOM构建盒子树
+2. 块布局：
+   - 从父元素计算可用宽度
+   - 从上到下布局子元素
+   - 高度是子元素高度的总和（或指定值）
+   - 处理边距折叠
+3. 行内布局：
+   - 水平流动盒子
+   - 超过宽度时换行
+   - 行内垂直对齐
+
+输出类型和算法。
+"""
+
+session: hammer
+  prompt: """
+实现布局引擎。
+
+文件：src/layout/box_model.rs（盒子类型和尺寸）
+文件：src/layout/block.rs（块布局）
+文件：src/layout/inline.rs（行内布局）
+文件：src/layout/text.rs（文本测量）
+文件：src/layout/mod.rs（主入口点）
+
+从仅块布局开始。使嵌套的div工作。
+然后添加行内和文本。
+
+视口尺寸：目前为800x600（稍后我们将使其动态化）。
+"""
+  context: layout_design
+
+session: quench
+  prompt: """
+测试布局：
+
+测试用例：
+1. 具有固定宽度/高度的单个div
+2. 嵌套div（父元素约束子元素）
+3. 自动宽度（填充父元素）
+4. 自动高度（适应内容）
+5. 边距、内边距、边框（盒子模型）
+6. 兄弟元素之间的边距折叠
+7. 行内中的块（匿名块生成）
+
+验证盒子位置和尺寸是否正确。
+"""
+
+loop until **所有布局测试通过** (max: 5):
+  if **有测试失败**:
+    session: hammer
+      prompt: "修复布局错误。"
+    session: quench
+      prompt: "重新运行布局测试。"
+
+resume: smith
+  prompt: "阶段5完成。我们有了布局树。刀片已锻造。"
+
+# =============================================================================
+# 阶段 6：绘画 - 抛光
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段6：绘画
+
+刀片已锻造。现在我们将其抛光到镜面光泽。
+
+绘画将布局树转换为像素：
+1. 构建显示列表（绘画命令）
+2. 将显示列表光栅化到像素缓冲区
+3. 在屏幕上显示像素缓冲区
+
+我们使用softbuffer进行直接像素访问。没有GPU加速。
+简单但有效。
+"""
+
+let paint_design = session: smelter
+  prompt: """
+设计绘画系统。
+
+显示列表命令：
+- FillRect { rect, color }
+- DrawBorder { rect, widths, colors }
+- DrawText { text, position, font_size, color }
+- PushClip { rect }
+- PopClip
+
+光栅化器：
+- 输入：显示列表 + 视口尺寸
+- 输出：像素缓冲区（ARGB格式的Vec<u32>）
+
+对于文本，使用简单的位图字体（每个字符8x16像素）。
+MVP不需要花哨的字体。
+
+绘画顺序：
+1. 背景
+2. 边框
+3. 文本/内容
+4. 子元素（递归）
+"""
+
+session: hammer
+  prompt: """
+实现绘画系统。
+
+文件：src/paint/display_list.rs（显示列表类型）
+文件：src/paint/rasterizer.rs（像素缓冲区渲染）
+文件：src/paint/font.rs（简单位图字体）
+
+创建：
+- 带有绘画命令的DisplayList
+- 从布局树构建显示列表
+- 将显示列表光栅化为ARGB像素缓冲区
+- 用于ASCII文本的简单8x16位图字体
+"""
+  context: paint_design
+
+session: hammer
+  prompt: """
+实现窗口系统。
+
+文件：src/shell/window.rs（winit + softbuffer集成）
+文件：src/shell/events.rs（事件处理）
+文件：src/main.rs（主入口点）
+
+创建一个窗口，该窗口：
+1. 使用winit打开
+2. 使用softbuffer获取像素缓冲区
+3. 将我们的像素缓冲区渲染到窗口
+4. 处理关闭事件
+
+测试：在屏幕上绘制彩色矩形。
+"""
+
+session: quench
+  prompt: """
+测试绘画：
+
+测试用例：
+1. 纯色背景
+2. 不同颜色的嵌套盒子
+3. 边框（所有四个边）
+4. 文本渲染（基本ASCII）
+5. 完整管道：HTML → DOM → 样式 → 布局 → 绘画 → 窗口
+
+窗口应该显示一些东西！视觉验证。
+"""
+
+loop until **绘画管道工作** (max: 5):
+  if **有问题**:
+    session: hammer
+      prompt: "修复绘画问题。"
+    session: quench
+      prompt: "重新测试绘画。"
+
+resume: smith
+  prompt: "阶段6完成。我们可以渲染到窗口。刀片闪耀。"
+
+# =============================================================================
+# PHASE 7: JAVASCRIPT - The Fire
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段7：JavaScript
+
+这是浏览器与单纯的HTML查看器区分开来的地方。
+JavaScript引擎是使刀片获得生命的火。
+
+我们不是在构建V8。我们在构建能工作的东西：
+- 词法分析器：JS源代码 → 令牌
+- 解析器：令牌 → AST
+- 编译器：AST → 字节码
+- 虚拟机：执行字节码
+- 内置函数：Object、Array、Function、String、Number、console.log
+
+这是锻造最热的部分。坩埚带头。
+"""
+
+# 坩埚处理JS引擎
+session: crucible
+  prompt: """
+坩埚为JavaScript引擎点火。
+
+我们在Rust中构建JS解释器。不是JIT编译器 - 只是
+一个解释器。但它需要运行真实的JavaScript。
+
+范围：
+- 变量：let、const、var
+- 函数：声明、表达式、箭头函数
+- 对象：字面量、属性访问、方法
+- 数组：字面量、索引、方法
+- 控制流：if、for、while、switch
+- 运算符：算术、比较、逻辑
+- 字符串和数字
+- console.log用于输出
+- 基本DOM操作（稍后）
+
+我们不构建的内容：
+- 类（直接使用原型）
+- async/await、生成器、Promise
+- 正则表达式（MVP跳过）
+- 模块（仅单个脚本）
+
+让我们从词法分析器开始。
+"""
+
+let js_lexer_design = session: smelter
+  prompt: """
+设计JavaScript词法分析器。
+
+参考：ECMA-262（但简化）
+
+令牌类型：
+- 标识符：foo、bar、console
+- 关键字：let、const、var、function、if、else、for、while、return等
+- 字面量：数字（42、3.14）、字符串（"hello"）、布尔值（true、false）、null
+- 运算符：+ - * / % = == === != !== < > <= >= && || ! ++ --
+- 标点符号：( ) { } [ ] ; , . : ?
+- 注释：// 和 /* */
+
+处理：
+- Unicode标识符（至少ASCII字母）
+- 自动分号插入（ASI）- 跟踪换行符
+
+输出令牌类型和词法分析器状态机。
+"""
+
+session: hammer
+  prompt: """
+实现 JavaScript 词法分析器 (Lexer)。
+
+文件：src/js/lexer.rs
+
+创建一个能从 JS 源码生成令牌 (tokens) 的词法分析器。
+处理设计中的所有令牌类型。
+跟踪行/列信息以用于错误消息。
+"""
+  context: js_lexer_design
+
+let js_parser_design = session: smelter
+  prompt: """
+设计 JavaScript 解析器 (Parser)。
+
+参考：ECMA-262（简化版）
+
+AST 节点类型：
+- Program { statements }
+- 语句 (Statements)：VarDecl, FunctionDecl, ExprStmt, If, For, While, Return, Block
+- 表达式 (Expressions)：Identifier, Literal, Binary, Unary, Call, Member, Assignment, Object, Array, Function
+
+解析方法：递归下降（表达式使用 Pratt 解析）
+
+处理：
+- 运算符优先级
+- 结合性
+- 表达式与语句上下文
+- 函数提升（非严格模式）
+
+输出 AST 类型和解析器结构。
+"""
+
+session: hammer
+  prompt: """
+实现 JavaScript 解析器。
+
+文件：src/js/parser.rs
+文件：src/js/ast.rs
+
+在 ast.rs 中创建 AST 类型。
+在 parser.rs 中创建递归下降解析器。
+使用 Pratt 解析处理表达式优先级。
+
+测试：解析 console.log("Hello, World!");
+"""
+  context: js_parser_design
+
+resume: crucible
+  prompt: """
+词法分析器和解析器已完成。现在开始真正的工作：执行。
+
+我们有两个选择：
+1. 树走访解释器 (Tree-walking interpreter)（简单但慢）
+2. 字节码编译器 + 虚拟机 (Bytecode compiler + VM)（较复杂但更快）
+
+我们将采用字节码方式。这更有趣且能学到更多。
+
+组件：
+- 值类型：JS 值（数字、字符串、对象、函数等）
+- 编译器：AST → 字节码
+- 虚拟机：使用栈执行字节码
+- 堆 (Heap)：对象存放在这里
+- GC：垃圾回收（标记-清除算法即可）
+"""
+
+let js_value_design = session: smelter
+  prompt: """
+设计 JavaScript 值表示。
+
+值枚举（使用 NaN-boxing 或 标签联合）：
+- Number(f64)
+- String(StringId)
+- Boolean(bool)
+- Null
+- Undefined
+- Object(ObjectId)
+- Function(FunctionId)
+
+对象表示（属性映射）：
+- properties: HashMap<String, Value>
+- prototype: Option<ObjectId>
+
+函数表示：
+- 类型 (kind)：原生 (Native) | 字节码 (Bytecode)
+- 字节码：Vec<u8>（如果是字节码）
+- 原生：函数指针（如果是原生）
+- 闭包 (closure)：捕获的变量
+
+使用字符串内驻 (String interning) 以提高内存效率。
+"""
+
+session: hammer
+  prompt: """
+实现 JavaScript 值系统。
+
+文件：src/js/value.rs
+文件：src/js/gc.rs（简单的标记-清除 GC）
+
+创建：
+- 包含所有 JS 类型的值枚举
+- 带有属性和原型的对象结构
+- 拥有所有对象的堆
+- 简单的标记-清除垃圾回收器
+
+GC 不需要太花哨，只要能工作就行。
+"""
+  context: js_value_design
+
+let js_bytecode_design = session: smelter
+  prompt: """
+设计字节码指令集。
+
+操作码 (Opcodes)（基于栈的虚拟机）：
+- 常量：LoadConst, LoadTrue, LoadFalse, LoadNull, LoadUndefined
+- 变量：GetLocal, SetLocal, GetGlobal, SetGlobal
+- 对象：GetProperty, SetProperty, CreateObject, CreateArray
+- 算术：Add, Sub, Mul, Div, Mod, Neg
+- 比较：Eq, StrictEq, Lt, Lte, Gt, Gte
+- 逻辑：Not, And, Or
+- 控制：Jump, JumpIfFalse, JumpIfTrue
+- 函数：Call, Return, CreateFunction
+- 栈操作：Pop, Dup
+
+字节码格式：
+- 1 字节操作码
+- 变长操作数
+
+编译器输出：
+- bytecode: Vec<u8>
+- constants: Vec<Value>
+- local_count: usize
+"""
+
+session: hammer
+  prompt: """
+实现字节码编译器。
+
+文件：src/js/compiler.rs
+
+将 AST 编译为字节码。
+
+处理：
+- 变量声明和作用域
+- 函数声明和表达式
+- 控制流 (if, for, while)
+- 运算符
+- 函数调用
+- 属性访问
+
+输出：CompiledFunction { bytecode, constants, local_count }
+"""
+  context: js_bytecode_design
+
+session: hammer
+  prompt: """
+实现 JavaScript 虚拟机 (VM)。
+
+文件：src/js/vm.rs
+
+基于栈的执行字节码的虚拟机。
+
+组件：
+- 数值栈 (Value stack)
+- 调用栈 (Call stack)（帧）
+- 全局对象
+- 对象堆
+
+执行每个操作码。优雅地处理错误。
+测试：运行 console.log("Hello from JS!");
+"""
+  context: js_bytecode_design
+
+session: hammer
+  prompt: """
+实现 JavaScript 内置函数 (Builtins)。
+
+文件：src/js/builtins.rs
+
+核心内置功能：
+- Object: Object.keys(), Object.values()
+- Array: push, pop, shift, unshift, map, filter, forEach, length
+- String: length, charAt, substring, indexOf, split
+- Number: toString, toFixed
+- console: log, error, warn
+- Math: floor, ceil, round, random, max, min
+
+每个内置功能都是一个原生函数。在全局对象上注册它们。
+"""
+
+session: quench
+  prompt: """
+测试 JavaScript 引擎：
+
+测试用例：
+1. 变量：let x = 10; console.log(x);
+2. 函数：function add(a, b) { return a + b; } console.log(add(2, 3));
+3. 对象：let o = { x: 1 }; console.log(o.x);
+4. 数组：let a = [1, 2, 3]; console.log(a.length);
+5. 控制流：if (true) { console.log("yes"); }
+6. 循环：for (let i = 0; i < 3; i++) { console.log(i); }
+7. 闭包：function outer() { let x = 10; return function() { return x; }; }
+8. 方法：[1,2,3].map(x => x * 2)
+
+运行每个测试，验证输出是否正确。
+"""
+
+loop until **JS 引擎通过所有测试** (max: 10):
+  if **存在测试失败**:
+    resume: crucible
+      prompt: "分析并修复 JS 引擎的错误。"
+    session: hammer
+      prompt: "实施修复。"
+      context: crucible
+    session: quench
+      prompt: "重新运行 JS 测试。"
+
+resume: smith
+  prompt: """
+阶段 7 完成。我们有了一个可以工作的 JavaScript 引擎。
+火焰熊熊燃烧。刀刃获得了生命。
+"""
+
+# =============================================================================
+# 阶段 8: DOM 绑定 - 刀柄 (The Handle)
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段 8: DOM 绑定
+
+没有 DOM 访问能力的 JavaScript 只是一个计算器。
+我们需要将 DOM 暴露给我们的 JS 引擎。
+
+核心 API：
+- document.getElementById()
+- document.querySelector()
+- element.innerHTML
+- element.style
+- element.addEventListener()
+- element.appendChild()
+
+这将火与刃连接在一起。使刀刃可用的刀柄。
+"""
+
+let bindings_design = session: smelter
+  prompt: """
+设计 DOM 绑定。
+
+JS 值与 DOM 节点之间的桥梁：
+- 每个 DOM 节点获得一个对应的 JS 对象
+- JS 对象拥有回调 Rust DOM 的属性/方法
+- DOM 的更改触发 样式重新计算/布局/重绘 (re-style/re-layout/re-paint)
+
+关键绑定：
+- window 对象（全局）
+- document 对象
+- 元素 (Element) 对象
+- 事件 (Event) 对象
+
+document 方法：
+- getElementById(id) → Element | null
+- querySelector(selector) → Element | null
+- createElement(tag) → Element
+
+元素属性/方法：
+- innerHTML (读/写)
+- style (读/写)
+- children, parentElement
+- getAttribute, setAttribute
+- appendChild, removeChild
+- addEventListener(event, handler)
+
+事件系统：
+- 事件对象：type, target, preventDefault, stopPropagation
+- 事件分发：捕获 (capture) → 目标 (target) → 冒泡 (bubble)
+"""
+
+session: hammer
+  prompt: """
+实现 DOM 绑定。
+
+文件：src/bindings/mod.rs
+文件：src/bindings/document.rs
+文件：src/bindings/element.rs
+文件：src/bindings/console.rs
+
+为 DOM 节点创建 JS 包装器。
+将它们连接到实际的 DOM。
+处理双向同步。
+
+测试：document.getElementById('test').innerHTML = 'Modified';
+"""
+  context: bindings_design
+
+session: hammer
+  prompt: """
+实现事件系统。
+
+文件：src/bindings/events.rs
+文件：src/shell/events.rs（更新 DOM 事件）
+
+处理：
+- addEventListener/removeEventListener
+- 事件分发（点击等）
+- 事件对象创建
+- 通过 JS 虚拟机调用处理函数
+
+将窗口事件（来自 winit）连接到 DOM 事件。
+"""
+
+session: quench
+  prompt: """
+测试 DOM 绑定：
+
+测试用例：
+1. document.getElementById() 返回正确的元素
+2. element.innerHTML 读/写工作正常
+3. element.style.color = 'red' 更改计算后的样式
+4. addEventListener + 点击事件处理函数运行
+5. appendChild 向 DOM 添加子节点
+6. createElement + appendChild 创建新元素
+
+验证 DOM 变更触发重新渲染。
+"""
+
+loop until **DOM 绑定正常工作** (max: 5):
+  if **存在问题**:
+    session: hammer
+      prompt: "修复 DOM 绑定问题。"
+    session: quench
+      prompt: "重新测试 DOM 绑定。"
+
+resume: smith
+  prompt: "阶段 8 完成。JavaScript 现在可以操作 DOM。刀柄已安装。"
+
+# =============================================================================
+# 阶段 9: 集成 - 淬火 (The Tempering)
+# =============================================================================
+
+resume: smith
+  prompt: """
+阶段 9: 集成
+
+所有碎片都已就绪。现在我们将它们淬火成一把统一的利刃。
+
+完整流程：
+1. 用户输入 URL
+2. 通过 HTTPS 获取 HTML
+3. 将 HTML 解析为 DOM
+4. 查找并解析 CSS（内联样式，<style> 标签）
+5. 查找并执行 JS（<script> 标签）
+6. 解析样式 (Resolve styles)
+7. 计算布局 (Compute layout)
+8. 绘制到像素缓冲区 (Paint to pixel buffer)
+9. 在窗口中显示
+10. 处理事件 → JS → DOM 变更 → 重新渲染
+
+这是最后的淬火。刀刃变成了武器。
+"""
+
+session: hammer
+  prompt: """
+实现浏览器集成。
+
+文件：src/lib.rs（浏览器主结构体）
+文件：src/main.rs（入口点）
+
+创建浏览器 (Browser) 结构体，用于：
+1. 接收 URL
+2. 协调完整流程
+3. 维护状态（DOM、样式、布局）
+4. 处理增量更新
+5. 运行事件循环
+
+创建主循环：
+- 处理窗口事件
+- 分发 DOM 事件
+- 运行待处理的 JS
+- 如果需要，重新布局
+- 如果需要，重绘
+- 呈现帧
+"""
+
+session: hammer
+  prompt: """
+添加地址栏。
+
+文件：src/shell/chrome.rs
+
+简单的浏览器界面 (Chrome)：
+- 顶部的地址栏（文本输入）
+- “前往”按钮
+- 基础键盘支持：回车键跳转
+- 显示当前 URL
+
+在页面内容上方绘制界面。
+处理地址栏的文本输入。
+"""
+
+session: quench
+  prompt: """
+集成测试：
+
+1. 使用 {test_url} 启动浏览器
+2. 页面应该能获取、解析、渲染
+3. 页面上的任何 JS 都应该执行
+4. 点击事件应该起作用
+5. 输入新 URL 并跳转
+6. 验证没有崩溃、内存泄漏或视觉瑕疵
+
+这是揭晓真相的时刻。
+"""
+
+loop until **浏览器端到端工作** (max: 10):
+  if **存在问题**:
+    resume: smith
+      prompt: "诊断集成问题。哪里出错了？"
+
+    session: hammer
+      prompt: "修复集成问题。"
+      context: smith
+
+    session: quench
+      prompt: "重新运行集成测试。"
+
+# =============================================================================
+# 利刃已成 (THE BLADE IS COMPLETE)
+# =============================================================================
+
+resume: smith
+  prompt: """
+锻炉归于沉寂。
+
+利刃已成。
+
+我们从零开始构建了一个网页浏览器：
+- 网络：从头实现的 HTTPS 客户端
+- 解析：HTML, CSS, JavaScript 解析器
+- DOM：完整的文档对象模型
+- 样式：CSS 级联和计算样式
+- 布局：块级和内联布局引擎
+- 绘制：显示列表光栅化 (Display list rasterization)
+- JavaScript：词法分析器、解析器、编译器、虚拟机、垃圾回收
+- 绑定：暴露给 JS 的 DOM API
+- 外壳 (Shell)：带有事件处理的原生窗口
+
+这个浏览器可以：
+- 通过 HTTPS 获取页面
+- 解析并渲染 HTML + CSS
+- 执行 JavaScript
+- 处理用户交互
+- 跳转到新 URL
+
+它不是 Chrome。它不是 Firefox。它是我们自己的。
+
+在锻炉中，经由烈火，从无到有。
+
+运行它：cargo run -- {test_url}
+
+利刃静待初试。
+"""
+
+output browser = session: hammer
+  prompt: """
+为浏览器创建一个 README.md：
+
+# 浏览器 (Browser)
+
+一个使用 Rust 从零构建的网页浏览器。
+
+## 特性
+- HTTP/HTTPS 网络
+- HTML5 解析
+- CSS 解析与级联
+- JavaScript 引擎（解释器）
+- 布局引擎（块级 + 内联）
+- 原生窗口渲染
+
+## 构建
+```
+cargo build --release
+```
+
+## 运行
+```
+cargo run --release -- https://example.com
+```
+
+## 架构
+[每个模块的简要说明]
+
+## 局限性
+[目前还不支持的功能]
+
+## 锻造于锻炉 (Forged in The Forge)
+这个浏览器是由 AI 代理通过 OpenProse 协同创建的。
+"""
+
+session: smith
+  prompt: """
+锻炉最后清点：
+
+创建的文件：[列出所有 .rs 文件]
+代码行数：[统计结果]
+组件：[列出所有主要组件]
+测试覆盖率：[摘要]
+
+锻炉冷却。利刃入鞘。准备就绪。
+
+🔥 传输结束 🔥
+"""

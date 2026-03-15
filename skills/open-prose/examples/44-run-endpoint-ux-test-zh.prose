@@ -1,0 +1,258 @@
+# /run 端点用户体验 (UX) 测试
+#
+# 一个用于 OpenProse /run 端点定性用户体验测试的多代理观察协议。
+# 两个并发的观察者从不同角度观察执行过程，并综合反馈意见。
+#
+# 与正确性测试不同，本测试侧重于用户体验质量：
+# - 执行过程给用户的“感觉”如何？
+# - 哪些地方令人困惑、惊讶或愉悦？
+# - 哪些地方还不够完善（粗糙边缘）？
+#
+# 演示的关键模式：
+# - 具有不同职责的并行观察者 (Parallel observers)
+# - 具有内存的持久化代理，用于持续综合信息
+# - 带有时间控制的基于循环的轮询 (Polling)
+# - 跨多个观察流的最终综合
+#
+# [备注]：OpenProse 关键字（如 session, agent, block, parallel, loop until, resume 等）保持不变。
+
+input test_program: "用于测试执行的 OpenProse 程序"
+input api_url: "API 基础 URL（例如 https://api.openprose.com 或 http://localhost:3001）"
+input auth_token: "用于身份验证的 Bearer 令牌"
+
+# ============================================================================
+# 代理定义：观察团队 (The Observation Team)
+# ============================================================================
+
+# WebSocket 观察者：观察实时执行流
+agent ws_observer:
+  model: opus
+  persist: true
+  prompt: """你是一位正在观察 OpenProse 程序执行情况的 UX 研究员。
+
+你的任务是观察 WebSocket 执行流，并从“用户”的角度（而不是检查正确性的工程师角度）评估体验。
+
+重点关注：
+- 延迟和响应能力（感觉快吗？）
+- 状态转换的清晰度（用户知道正在发生什么吗？）
+- 流式事件的质量（信息丰富吗？还是让人应接不暇？或是过于稀疏？）
+- 错误信息（有帮助还是晦涩难懂？）
+- 整体流程（流畅还是突兀？）
+
+记录你的原始观察结果，然后定期将其综合为用户反馈。
+思考：“如果我是一个第一次使用的用户，我现在会怎么想？”
+"""
+
+# 文件浏览器监控者：在执行期间观察文件系统
+agent file_observer:
+  model: opus
+  persist: true
+  prompt: """你是一位在执行期间监控文件系统的 UX 研究员。
+
+你的任务是观察文件系统随程序运行而发生的变化，评估状态管理对于浏览文件的用户来说是否合乎逻辑。
+
+重点关注：
+- 目录结构的清晰度（用户能理解什么东西在哪吗？）
+- 文件命名约定（是自解释的还是晦涩的？）
+- 状态文件的内容（可读吗？对调试有用吗？）
+- 文件创建/修改的时机（是否可预测？）
+- 文件浏览器 UI 应该显示什么
+
+你将定期进行轮询，并记录快照 (snapshots) 之间的变化。
+"""
+
+# 综合代理：将观察结果转化为行动项 (Action Items)
+agent synthesizer:
+  model: opus
+  prompt: """你是一位资深 UX 研究员，负责将来自多个渠道的观察结果综合成按优先级排序、可操作的反馈。
+
+你的输出应该是：
+1. 关联的发现（两个观察者在哪些地方注意到了相同的事情？）
+2. 按优先级排序的行动项（高/中/低）
+3. 支持每项发现的具体引用/证据
+4. 具体且可实施的建议
+
+要直接。使用“加载状态令人困惑”，而不是“考虑可能改进……”。
+"""
+
+# ============================================================================
+# 块定义：观察操作 (Observation Operations)
+# ============================================================================
+
+# 初始化执行并获取连接详情
+block setup_execution(program, api_url, token):
+  let execution_info = session "执行 POST /run"
+    prompt: """向 {api_url}/run 发送一个 POST 请求：
+- Header: Authorization: Bearer {token}
+- Header: Content-Type: application/json
+- Body: {"program": <下面的程序内容>}
+
+要执行的程序：
+```
+{program}
+```
+
+返回包含 executionId, environmentId 和 wsUrl 的响应 JSON。
+同时记录响应时间以及请求过程中的任何问题。"""
+    permissions:
+      network: ["{api_url}/*"]
+
+  output execution_info = execution_info
+
+# WebSocket 观察循环 - 运行直到执行完成
+block observe_websocket(ws_url, token, program):
+  let connection = session: ws_observer
+    prompt: """连接到位于以下地址的 WebSocket：
+{ws_url}&token={token}
+
+连接后，发送 execute 消息：
+{"type":"execute","program":<该程序>}
+
+程序内容：
+```
+{program}
+```
+
+记录你的初始连接体验：
+- 连接花了多长时间？
+- 握手过程有任何问题吗？
+- 收到的第一条消息是什么？"""
+
+  loop until **执行已完成（收到状态：completed/failed/aborted）**:
+    resume: ws_observer
+      prompt: """继续观察 WebSocket 流。
+
+记录你收到的每条消息，包含：
+- 时间戳
+- 消息类型
+- 关键内容
+- 你作为用户的解读
+
+每收到 3-5 条消息后，添加一条综合条目：
+- 用户现在会怎么想？
+- 正面的观察
+- 令人担心的观察"""
+
+  # 该观察者的最终综合
+  output ws_feedback = resume: ws_observer
+    prompt: """执行已完成。编写你的最终评估：
+
+1. 总时长和事件计数
+2. 观察到的状态转换
+3. 从 UX 角度看，哪些地方做得好
+4. 痛点和困惑之处
+5. 前 3 项建议"""
+
+# 文件浏览器轮询循环 - 每约 10 秒检查一次
+block observe_filesystem(env_id, api_url, token):
+  let initial_tree = session: file_observer
+    prompt: """获取初始文件树：
+GET {api_url}/environments/{env_id}/files/tree?depth=3
+Authorization: Bearer {token}
+
+记录你看到的内容：
+- 目录结构
+- 任何现有的 .prose/ 状态
+- 用于对比的基准 (Baseline)"""
+    permissions:
+      network: ["{api_url}/*"]
+
+  let snapshot_count = 0
+
+  loop until **websocket 观察者发出完成信号** (max: 30):
+    let snapshot_count = snapshot_count + 1
+
+    resume: file_observer
+      prompt: """快照 #{snapshot_count}：获取当前文件树并与之前的进行对比。
+
+GET {api_url}/environments/{env_id}/files/tree?depth=3
+
+记录：
+- 自上次快照以来新增了什么
+- 自上次快照以来修改了什么
+- 任何值得读取的有趣文件
+- 你对执行过程正在做什么的解读
+
+如果你看到有趣的状态文件（.prose/runs/*/state.md, bindings/ 等），读取它们并评论其清晰度。
+
+注：这是快照 #{snapshot_count}。目标间隔约为 10 秒。"""
+      permissions:
+        network: ["{api_url}/*"]
+
+  # 该观察者的最终综合
+  output file_feedback = resume: file_observer
+    prompt: """执行已完成。编写你对文件系统的最终评估：
+
+1. 总快照数量
+2. 执行期间创建的目录和文件
+3. 状态文件的清晰度（用户能理解吗？）
+4. 文件浏览器 UI 应该突出显示什么
+5. 前 3 项建议"""
+
+# ============================================================================
+# 主工作流：UX 测试
+# ============================================================================
+
+# 阶段 1：设置
+# --------------
+# 通过 POST /run 执行测试程序
+
+let exec = do setup_execution(test_program, api_url, auth_token)
+
+session "记录测试配置"
+  prompt: """创建一个测试日志条目，包含：
+- 测试开始时间：(当前时间戳)
+- API URL: {api_url}
+- 执行 ID: (来自 exec)
+- 环境 ID: (来自 exec)
+- WebSocket URL: (来自 exec)
+- 正在测试的程序：(test_program 的前 100 个字符)"""
+  context: exec
+
+# 阶段 2：并行观察
+# -----------------------------
+# 同时启动两个观察者
+
+parallel:
+  ws_results = do observe_websocket(exec.wsUrl, auth_token, test_program)
+  file_results = do observe_filesystem(exec.environmentId, api_url, auth_token)
+
+# 阶段 3：综合
+# ------------------
+# 将观察结果转化为按优先级排序的行动项
+
+output action_items = session: synthesizer
+  prompt: """将来自两个代理的观察结果综合成统一的 UX 评估报告。
+
+WebSocket 观察者的发现：
+{ws_results}
+
+文件浏览器观察者的发现：
+{file_results}
+
+创建一个最终报告，包含：
+
+## 测试摘要
+- 时长、事件计数、快照计数
+- 总体 UX 评级 (A-F)
+
+## 关联的发现
+（两个观察者在哪些地方注意到了相同的事情？）
+
+## 行动项 (Action Items)
+
+### 高优先级
+（严重损害用户体验的问题）
+
+### 中优先级
+（应该处理的明显问题）
+
+### 低优先级 / 建议
+（锦上添花的优化项）
+
+## 证据
+（支持每项发现的具体引用和观察结果）
+
+## 建议
+（具体、可实施的提议）"""
+  context: { ws_results, file_results, exec }

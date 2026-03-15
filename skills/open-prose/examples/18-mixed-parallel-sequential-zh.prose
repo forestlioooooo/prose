@@ -1,0 +1,43 @@
+# 混合并行和顺序工作流
+# 演示嵌套并行块和顺序块
+
+# 定义工作代理
+# 备注：此示例使用通用代理，通过不同提示执行不同任务
+agent worker:
+  model: sonnet
+
+# 定义可重用的块
+# 备注：setup 块包含初始化步骤，cleanup 块包含清理步骤
+# 这种封装使主工作流更加清晰
+block setup:
+  session "初始化资源"
+  session "验证配置"
+
+block cleanup:
+  session "保存结果"
+  session "释放资源"
+
+# 具有混合组合的主要工作流
+# 备注：主 do 块包含完整的端到端工作流
+do:
+  do setup
+
+  # 并行处理阶段
+  # 备注：parallel 块内部可以包含复杂的分支，每个分支可以是 do 块
+  # 这展示了 OpenProse 的灵活性和表达能力
+  parallel:
+    # 每个并行分支可以有多个步骤
+    do:
+      session: worker
+        prompt: "处理批次 1 - 步骤 1"
+      session: worker
+        prompt: "处理批次 1 - 步骤 2"
+    do:
+      session: worker
+        prompt: "处理批次 2 - 步骤 1"
+      session: worker
+        prompt: "处理批次 2 - 步骤 2"
+
+  session "汇总结果"
+
+  do cleanup

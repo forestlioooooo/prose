@@ -1,0 +1,48 @@
+# 安全代理权限示例
+# 此示例展示如何定义具有受限访问权限的代理。
+
+# 导入所需技能
+import "code-analyzer" from "github:anthropic/code-tools"
+
+# 定义只读代码审查代理
+# 备注：此代理可以读取源代码文件，但不能修改它们或运行 shell 命令
+# 这是最小权限原则的示例，只授予完成任务所需的最低权限
+agent code-reviewer:
+  model: sonnet
+  prompt: "你是一名细致的代码审查员"
+  skills: ["code-analyzer"]
+  permissions:
+    read: ["src/**/*.ts", "src/**/*.js", "*.md"]
+    write: []
+    bash: deny
+
+# 定义具有有限写入权限的文档编写代理
+# 备注：只能写入 docs 目录，不能执行 shell 命令
+# 这种限制可以防止意外修改代码或执行危险操作
+agent doc-writer:
+  model: opus
+  prompt: "你编写技术文档"
+  permissions:
+    read: ["src/**/*", "docs/**/*"]
+    write: ["docs/**/*.md"]
+    bash: deny
+
+# 定义具有完全访问权限的管理员代理
+# 备注：管理员代理具有广泛权限，可以读取/写入任何文件，执行 bash 命令，访问网络
+# 注意：bash: prompt 表示执行 bash 命令前需要提示确认，network: allow 允许网络访问
+agent admin:
+  model: opus
+  prompt: "你执行管理任务"
+  permissions:
+    read: ["**/*"]
+    write: ["**/*"]
+    bash: prompt
+    network: allow
+
+# 工作流：代码审查后更新文档
+# 备注：这个工作流展示了权限分离的最佳实践 - 审查代理只读，文档代理有限写入
+session: code-reviewer
+  prompt: "审查代码库中的安全问题和最佳实践"
+
+session: doc-writer
+  prompt: "根据代码审查结果更新文档"

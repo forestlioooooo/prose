@@ -1,0 +1,163 @@
+# 插件完整发布流程 (Complete Plugin Release)
+# 一个比手动发布更彻底、更自动化的发布流程
+#
+# [备注]：该程序通过多代理协作，确保代码验证、文档生成、版本控制等环节万无一失。
+# OpenProse 关键字（如 session, agent, parallel, let, if, throw, try, catch, output 等）保持不变。
+
+input release_type: "可选：'major' (主版本), 'minor' (次版本), 'patch' (修订号), 或留空由程序自动检测"
+
+agent validator:
+  model: sonnet
+  prompt: "验证代码和文档。清晰地报告发现的问题。"
+  permissions:
+    read: ["**/*.prose", "**/*.md"]
+
+agent analyzer:
+  model: opus
+  prompt: "分析 Git 历史记录并确定发布影响。"
+  permissions:
+    bash: allow
+
+agent writer:
+  model: opus
+  prompt: "编写清晰、简洁的发布文档。"
+
+agent executor:
+  model: sonnet
+  permissions:
+    bash: allow
+    write: ["**/*.json", "**/*.md"]
+
+# ============================================================
+# 阶段 1：起飞前检查 (Pre-flight checks)
+# 并行执行 - 快速失败
+# ============================================================
+
+parallel (on-fail: "fail-fast"):
+  examples_valid = session: validator
+    prompt: "编译所有 .prose 示例，报告任何语法错误"
+    context: "skills/open-prose/examples/*.prose"
+
+  docs_complete = session: validator
+    prompt: "验证 README.md 是否列出了所有实际存在的示例文件"
+    context: "skills/open-prose/examples/"
+
+  repo_clean = session: executor
+    prompt: "检查是否有未提交的更改，以及当前分支是否正确"
+
+  no_duplicate = session: executor
+    prompt: "列出已有的版本标签 (tags)"
+
+if **发现起飞前检查问题 (pre-flight issues found)**:
+  throw "起飞前检查失败 - 请在发布前修复这些问题"
+
+# ============================================================
+# 阶段 2：分析发布内容
+# ============================================================
+
+let last_tag = session: executor
+  prompt: "获取最近的版本标签 (tag)"
+
+let commits = session: analyzer
+  prompt: "获取自上次发布以来的所有提交记录 (commits)"
+  context: last_tag
+
+let impact = session: analyzer
+  prompt: """
+    分析这些提交记录。进行分类：
+    - 破坏性更改 (Breaking changes)（API 或合约更改）
+    - 新特性 (Features)（新能力）
+    - 修复 (Fixes)（Bug 修复、文档改进、重构）
+  """
+  context: commits
+
+# ============================================================
+# 阶段 3：确定版本号
+# ============================================================
+
+let version = session: analyzer
+  prompt: """
+    确定下一个版本号。
+
+    当前版本：{last_tag}
+    请求类型：{release_type}
+
+    规则：
+    - 破坏性更改 (Breaking changes) → 主版本号 (major) 进位
+    - 新特性 (Features) → 次版本号 (minor) 进位
+    - 仅有修复 (Fixes) → 修订号 (patch) 进位
+    - 如果指定了 release_type，则使用它（但如果与分析结果矛盾，需发出警告）
+  """
+  context: impact
+
+if **版本号与更改内容不符 (version seems wrong for changes)**:
+  input user_override: "请确认版本号 {version} 是否正确"
+
+# ============================================================
+# 阶段 4：生成发布产出物 (parallel)
+# ============================================================
+
+parallel:
+  changelog_entry = session: writer
+    prompt: "为此发布编写更新日志 (CHANGELOG) 条目"
+    context: { version, impact, commits }
+
+  release_notes = session: writer
+    prompt: "编写 GitHub Release 说明 - 简洁、以用户为中心"
+    context: { version, impact }
+
+  commit_msg = session: writer
+    prompt: "编写提交信息 (commit message)"
+    context: { version, impact }
+
+# ============================================================
+# 阶段 5：执行发布
+# ============================================================
+
+try:
+  # 更新文件
+  let files_updated = session: executor
+    prompt: "将 plugin.json 更新为版本 {version}"
+
+  # 子模块发布
+  let committed = session: executor
+    prompt: "暂存 (Stage) 所有更改、提交、打标签 v{version}、并推送 (push) 标签"
+    context: { files_updated, commit_msg }
+
+  # 父仓库处理
+  let parent_done = session: executor
+    prompt: "更新父仓库的子模块引用、提交并推送"
+    context: committed
+
+catch as err:
+  session: executor
+    prompt: "回滚 (Rollback)：如果创建了本地标签则删除它，并重置提交"
+    context: err
+  throw "发布失败 - 已回滚"
+
+# ============================================================
+# 阶段 6：发布后操作 (parallel)
+# ============================================================
+
+parallel (on-fail: "continue"):
+  gh_release = session: executor
+    prompt: "为 v{version} 创建 GitHub Release"
+    context: release_notes
+
+  verified = session: executor
+    prompt: "拉取市场 (Marketplace) 数据，验证 plugin.json 显示为 {version}"
+
+  install_test = session: validator
+    prompt: "测试全新的插件安装是否工作正常"
+
+# ============================================================
+# 输出结果
+# ============================================================
+
+output release = {
+  version: version,
+  tag: "v{version}",
+  changelog: changelog_entry,
+  notes: release_notes,
+  verification: verified
+}

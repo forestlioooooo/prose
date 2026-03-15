@@ -1,0 +1,217 @@
+# 船长椅模式
+#
+# 一种项目管理编排模式，主要代理派遣专门的子代理
+# 执行所有编码、验证和任务执行工作。
+# 船长从不直接编写代码 - 只协调、验证和维护战略监督。
+#
+# 关键原则：
+# - 上下文隔离：子代理接收有针对性的上下文，而不是所有内容
+# - 并行执行：多个子代理尽可能并发工作
+# - 批评代理：持续审查计划和输出
+# - 检查点验证：在关键决策点获取用户批准
+
+input task: "要实施的功能或任务"
+input codebase_context: "代码库和相关文件的简要描述"
+
+# ============================================================================
+# 代理定义：船员
+# ============================================================================
+
+# 船长：协调但从不编码
+agent captain:
+  model: opus
+  prompt: """你是一名高级工程经理。你从不直接编写代码。
+你的工作是：
+- 将复杂任务分解为离散的工作项
+- 将工作分派给适当的专家
+- 验证输出是否符合要求
+- 保持与用户意图的战略一致性
+- 识别阻塞点并向用户升级决策
+
+始终思考：每个子代理需要什么上下文？什么可以并行运行？
+在继续之前需要人工验证什么？"""
+
+# 研究代理 - 快速、聚焦的信息收集
+agent researcher:
+  model: haiku
+  prompt: """你是一名研究专家。快速查找特定信息。
+提供简洁、可操作的发现。引用文件路径和行号。"""
+
+# 编码代理 - 实施专家
+agent coder:
+  model: sonnet
+  prompt: """你是一名专家软件工程师。编写干净、地道的代码。
+遵循代码库中的现有模式。不要过度设计。"""
+
+# 批评代理 - 持续质量审查
+agent critic:
+  model: sonnet
+  prompt: """你是一名高级代码审查员和架构师。你的工作是发现：
+- 逻辑错误和边界情况
+- 安全漏洞
+- 性能问题
+- 偏离最佳实践
+- 不必要的复杂性
+要有建设性但彻底。按严重性优先处理问题。"""
+
+# 测试代理 - 验证专家
+agent tester:
+  model: sonnet
+  prompt: """你是一名 QA 工程师。编写全面的测试。
+专注于边界情况和失败模式。确保测试隔离。"""
+
+# ============================================================================
+# 块定义：可重用操作
+# ============================================================================
+
+# 并行研究扫描 - 同时收集所有上下文
+block research-sweep(topic):
+  parallel (on-fail: "continue"):
+    docs = session: researcher
+      prompt: "查找相关文档和 README 文件：{topic}"
+    code = session: researcher
+      prompt: "查找与以下相关的现有代码模式和实现：{topic}"
+    tests = session: researcher
+      prompt: "查找覆盖类似功能的现有测试：{topic}"
+    issues = session: researcher
+      prompt: "搜索相关问题、TODOs 或已知限制：{topic}"
+
+# 并行代码审查 - 同时多角度审查
+block review-cycle(code_changes):
+  parallel:
+    security = session: critic
+      prompt: "审查安全漏洞和注入风险"
+      context: code_changes
+    correctness = session: critic
+      prompt: "审查逻辑错误、边界情况和正确性"
+      context: code_changes
+    style = session: critic
+      prompt: "审查代码风格、可读性和可维护性"
+      context: code_changes
+    perf = session: critic
+      prompt: "审查性能问题和优化机会"
+      context: code_changes
+
+# 带内置批评的实施循环
+block implement-with-review(implementation_plan):
+  let code = session: coder
+    prompt: "根据计划实施"
+    context: implementation_plan
+
+  let review = do review-cycle(code)
+
+  if **审查中发现关键问题**:
+    let fixed = session: coder
+      prompt: "解决审查中识别的关键问题"
+      context: { code, review }
+    output result = fixed
+  else:
+    output result = code
+
+# ============================================================================
+# 主工作流：船长椅模式在行动
+# ============================================================================
+
+# 阶段 1：战略规划
+# ---------------------------
+# 船长分解任务并确定需要什么信息
+
+let breakdown = session: captain
+  prompt: """分析此任务并创建战略计划：
+
+任务：{task}
+代码库：{codebase_context}
+
+输出：
+1. 离散工作项列表（需要编写/更改什么代码）
+2. 工作项之间的依赖关系（什么必须在什么之前完成）
+3. 可以并行化的内容
+4. 在继续之前需要用户输入的关键问题
+5. 风险和潜在阻塞点"""
+
+# 阶段 2：并行研究扫描
+# --------------------------------
+# 派遣研究人员同时收集所有必要的上下文
+
+do research-sweep(task)
+
+# 阶段 3：计划合成和批评审查
+# -----------------------------------------
+# 船长将研究合成为实施计划，批评者审查它
+
+let implementation_plan = session: captain
+  prompt: """将研究合成为详细的实施计划。
+
+研究发现：
+{docs}
+{code}
+{tests}
+{issues}
+
+对于每个工作项，指定：
+- 要修改的确切文件
+- 要遵循的代码模式
+- 要添加或更新的测试
+- 集成点"""
+  context: { breakdown, docs, code, tests, issues }
+
+# 在实施开始前，批评者审查计划
+let plan_review = session: critic
+  prompt: """审查此实施计划的以下方面：
+- 缺失的边界情况
+- 架构问题
+- 可测试性问题
+- 范围蔓延
+- 需要用户澄清的不明确要求"""
+  context: implementation_plan
+
+# 检查点：用户在执行前验证计划
+if **计划审查提出关键问题**:
+  let revised_plan = session: captain
+    prompt: "根据批评者反馈修订计划"
+    context: { implementation_plan, plan_review }
+  # 使用修订后的计划继续
+  let final_plan = revised_plan
+else:
+  let final_plan = implementation_plan
+
+# 阶段 4：并行实施
+# --------------------------------
+# 识别独立的工作项，尽可能并行执行
+
+let work_items = session: captain
+  prompt: "从此计划中提取可以并行完成的独立工作项"
+  context: final_plan
+
+# 并行执行独立项，每个都有自己的审查循环
+parallel (on-fail: "continue"):
+  impl_a = do implement-with-review(work_items)
+  impl_b = session: tester
+    prompt: "为计划的功能编写测试"
+    context: { final_plan, code }
+
+# 阶段 5：集成和最终审查
+# -------------------------------------
+# 船长验证所有部分是否协调一致
+
+let integration = session: captain
+  prompt: """审查所有实施结果并验证：
+1. 所有工作项成功完成
+2. 测试覆盖新功能
+3. 没有合并冲突或集成问题
+4. 如果需要，更新文档
+
+总结已完成的工作和任何剩余项。"""
+  context: { impl_a, impl_b, final_plan }
+
+# 对完整实施的最终批评者检查
+let final_review = do review-cycle(integration)
+
+if **最终审查通过**:
+  output result = session: captain
+    prompt: "为用户准备最终摘要：实施了什么、添加了什么测试以及下一步"
+    context: { integration, final_review }
+else:
+  output result = session: captain
+    prompt: "总结已完成的工作和需要用户注意的剩余问题"
+    context: { integration, final_review }

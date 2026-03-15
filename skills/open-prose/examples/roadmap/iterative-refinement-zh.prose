@@ -1,0 +1,26 @@
+# 迭代精炼示例 (Iterative Refinement Example)
+# 编写草稿，获取反馈，精炼直至获批
+#
+# [备注]：OpenProse 关键字（如 agent, let, session, loop until 等）保持不变。
+# 该示例属于路线图 (Roadmap) 计划中的特性，目前可能无法运行。
+
+agent writer:
+  model: opus
+
+agent reviewer:
+  model: sonnet
+
+# 阶段 1：初稿编写
+let draft = session: writer
+  prompt: "编写关于 AI 安全的初稿"
+
+# 阶段 2：迭代循环，直到获批
+loop until **获批 (approved)**:
+  let feedback = session: reviewer
+    prompt: "评审此草稿并提供反馈"
+    context: draft
+
+  # 根据反馈改进草稿
+  draft = session: writer
+    prompt: "根据反馈改进草稿"
+    context: { draft, feedback }

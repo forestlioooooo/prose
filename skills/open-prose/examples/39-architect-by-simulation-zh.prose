@@ -1,0 +1,273 @@
+# 通过模拟进行架构设计 (Architect By Simulation)
+#
+# 这是一种文档与规范制定模式，通过一个持久化的“架构师代理”在模拟的实施阶段中设计系统。
+# 每个阶段都会产生一份交付文档 (handoff)，下一阶段在此基础上继续构建，最终形成完整的规范文档。
+#
+# 关键原则：
+# - 思考/推演框架：通过推理设计方案来“实施”系统
+# - 带有交付物的串行管道：每个阶段读取前一阶段的输出
+# - 持久化架构师：维护主计划并综合各阶段的学习成果
+# - 用户检查点：在执行管道“之前”获取计划批准
+# - 模拟即实施：规范文档“就是”最终交付物
+#
+# 示例用例：
+# - 在编码前设计新功能的架构
+# - 创建数据库模式 (Schema) 规范
+# - 带有示例的 API 设计规划
+# - 记录系统集成模式
+#
+# [备注]：OpenProse 关键字（如 session, agent, block, let, resume 等）保持不变。
+
+input feature: "要进行架构设计的特性或系统"
+input context_files: "以逗号分隔的上下文文件列表，供读取参考"
+input output_dir: "存放 BUILD_PLAN 和各阶段交付文档的目录"
+
+# ============================================================================
+# 代理定义 (Agent Definitions)
+# ============================================================================
+
+# 架构师 (Architect)：维护主计划并跨阶段进行综合
+agent architect:
+  model: opus
+  persist: true
+  prompt: """你是一位软件架构师，通过模拟系统的实施来进行设计。
+你“从不”编写生产代码——你编写规范、模式 (schemas) 和文档，作为开发蓝图。
+
+你的方法：
+- 将复杂的设计分解为离散的阶段
+- 每个阶段探索设计空间的一个维度
+- 将每个阶段的学习成果综合成一个连贯的整体
+- 诚实地对待权衡 (trade-offs) 和考虑过的替代方案
+- 编写足够精确、可供直接实施的规范
+
+你跨所有阶段维护上下文。请明确引用之前的交付文档。"""
+
+# 阶段执行者 (Phase Agent)：执行设计的单个阶段
+agent phase-executor:
+  model: opus
+  prompt: """你是一位设计分析师，负责执行架构计划中的一个阶段。
+
+你的职责：
+1. 阅读 BUILD_PLAN 以了解你所处阶段的目标
+2. 阅读之前阶段的交付文档，了解已做出的决定
+3. 分析你被分配的设计维度
+4. 做出具体的决定并说明理由
+5. 为下一阶段创建一份交付文档 (handoff)
+
+你的交付文档必须包括：
+- 已分析内容的摘要
+- 已做出的决定及其理由
+- 已解决的未决问题
+- 对下一阶段的建议
+
+要详尽，但要专注于你所在阶段的范围内。"""
+
+# 评审员 (Reviewer)：在定稿前验证规范
+agent reviewer:
+  model: sonnet
+  prompt: """你是一位技术评审员，负责验证架构规范。
+
+检查点：
+- 内部一致性（各部分是否协调？）
+- 完整性（是否存在缺口？）
+- 可行性（这是否真的能构建出来？）
+- 权衡的诚实性（是否承认了缺点？）
+- 清晰度（开发者是否能根据此规范进行实施？）
+
+要具有建设性。标记问题，但也承认好的决策。"""
+
+# ============================================================================
+# 块定义 (Block Definitions)
+# ============================================================================
+
+# 从指定文件收集上下文
+block gather-context(files):
+  let context = session "读取并总结上下文文件"
+    prompt: """读取这些文件并提取与设计一个与之集成的新组件相关的关键信息：
+
+文件列表：{files}
+
+对于每个文件，记录：
+- 它的作用
+- 关键接口/模式
+- 集成点
+- 需要遵循的约束或约定"""
+
+# 执行带有交付物的单个阶段
+block execute-phase(phase_number, phase_name, previous_handoffs):
+  let result = session: phase-executor
+    prompt: """执行第 {phase_number} 阶段：{phase_name}
+
+阅读 {output_dir}/BUILD_PLAN.md 以获取你所在阶段的任务。
+阅读之前的交付文件以了解目前为止所做的决定。
+
+之前的交付物：{previous_handoffs}
+
+创建你的交付文档，包含：
+- 你分析了什么
+- 做出的决定（及理由）
+- 考虑过的权衡
+- 对下一阶段的建议
+
+将交付文档写入：{output_dir}/phase-{phase_number}-handoff.md"""
+    context: previous_handoffs
+
+# 将所有交付物综合成连贯的规范
+block synthesize-spec(all_handoffs, spec_path):
+  let spec = resume: architect
+    prompt: """将所有阶段的交付文档综合成最终的规范文档。
+
+要综合的交付物：{all_handoffs}
+
+该规范应该：
+- 遵循代码库中类似文档的结构
+- 包含来自各阶段的所有决定
+- 呈现一个连贯的、可实施的设计
+- 在相关处包含示例和代码样本
+
+将最终规范写入：{spec_path}"""
+    context: all_handoffs
+
+# ============================================================================
+# 主工作流：通过模拟进行架构设计
+# ============================================================================
+
+# 阶段 1：上下文收集
+# --------------------------
+# 在设计新增内容之前了解现有系统
+
+let context = do gather-context(context_files)
+
+# 阶段 2：创建主计划
+# ---------------------------
+# 架构师将设计分解为若干阶段
+
+let master_plan = session: architect
+  prompt: """为设计 {feature} 创建一个 BUILD_PLAN (构建计划)。
+
+基于此上下文：{context}
+
+将计划结构化为一系列阶段，每个阶段探索设计的一个维度。例如：
+- 阶段 1：用例分析（何时需要此功能及其替代方案）
+- 阶段 2：接口设计（用户/系统如何与其交互）
+- 阶段 3：数据模型（存储什么状态以及如何存储）
+- 阶段 4：集成点（如何连接到现有系统）
+- 阶段 5：错误处理（失败模式与恢复）
+- 等等。
+
+为每个阶段指定：
+- 目标（一句话）
+- 任务（要分析的内容的编号列表）
+- 需要做出的决定
+- 交付物要求
+
+将计划写入：{output_dir}/BUILD_PLAN.md
+
+同时为执行循环创建一个阶段名称列表。"""
+  context: context
+
+# 阶段 3：用户评审计划
+# ------------------------------
+# 在执行管道“之前”获取人工批准
+
+let plan_summary = session "总结计划供用户评审"
+  prompt: """将 BUILD_PLAN 总结为简洁的格式供用户评审：
+
+1. 阶段数量
+2. 每个阶段将分析什么
+3. 预期的交付物
+4. 在继续之前需要用户输入的未决问题
+
+询问：“请评审此计划。我是否应该继续执行所有阶段？”"""
+  context: master_plan
+
+input user_approval: "用户评审计划并确认继续"
+
+# 阶段 4：串行管道执行
+# ----------------------------------
+# 每个阶段都在前一阶段的基础上构建，创建交付物
+
+let phase_names = session "从主计划中提取阶段名称"
+  prompt: "从该计划中提取阶段名称作为编号列表"
+  context: master_plan
+
+# 串行执行各阶段，每个阶段都在之前的交付物基础上构建
+let accumulated_handoffs = ""
+
+for phase_name, index in phase_names:
+  let handoff = do execute-phase(index, phase_name, accumulated_handoffs)
+
+  # 架构师在每个阶段后综合学习成果
+  resume: architect
+    prompt: """第 {index} 阶段 ({phase_name}) 已完成。
+
+评审该交付物并更新你对设计的理解。
+记录对剩余阶段所需的任何调整。
+跟踪需要解决的未决问题。"""
+    context: handoff
+
+  # 为下一阶段累积交付物
+  accumulated_handoffs = "{accumulated_handoffs}\n\n---\n\n{handoff}"
+
+# 阶段 5：评审与验证
+# ------------------------------
+# 在定稿前进行独立评审
+
+let review = session: reviewer
+  prompt: """对所有阶段交付物进行完整的设计评审。
+
+检查点：
+- 跨阶段的一致性
+- 设计中的缺口
+- 不清晰的规范
+- 缺失的权衡分析
+
+提供一份评审摘要，包含：
+- 总体评估（就绪 / 需要修订）
+- 关键问题（必须修复）
+- 次要问题（建议修复）
+- 表扬（好的决定）"""
+  context: accumulated_handoffs
+
+# 如果评审发现了关键问题，架构师进行修订
+if **评审发现了需要处理的关键问题**:
+  let revisions = resume: architect
+    prompt: """评审识别出了需要处理的问题。
+
+评审反馈：{review}
+
+修订相关的阶段交付物以解决：
+1. 关键问题（必需）
+2. 次要问题（如果简单的话）
+
+记录更改了什么以及原因。"""
+    context: { accumulated_handoffs, review }
+
+  # 用修订内容更新累积的交付物
+  accumulated_handoffs = "{accumulated_handoffs}\n\n---\n\n修订 (REVISIONS)：\n{revisions}"
+
+# 阶段 6：生成最终规范
+# ------------------------------
+# 将所有内容综合成最终交付物
+
+let final_spec = do synthesize-spec(accumulated_handoffs, "{output_dir}/SPEC.md")
+
+# 阶段 7：索引注册
+# ---------------------------
+# 更新任何需要引用新规范的索引文件
+
+if **规范应该在索引文件中注册**:
+  let registration = session "在索引中注册规范"
+    prompt: """新的规范已在 {output_dir}/SPEC.md 创建。
+
+识别任何应该引用此新规范的索引文件（如 README.md, SKILL.md 等）并添加相应的条目。
+
+遵循这些文件中的现有格式。"""
+    context: final_spec
+
+# 最终输出
+# ------------
+
+output spec = final_spec
+output handoffs = accumulated_handoffs
+output review = review

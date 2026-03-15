@@ -1,0 +1,252 @@
+# 错误取证 (Error Forensics)
+# 对失败或有问题的运行记录 (runs) 进行深度调查
+#
+# 用法:
+#   prose run @openprose/lib/error-forensics
+#
+# 输入:
+#   run_path: 失败/有问题的运行记录路径
+#   focus: 可选的关注领域 (vm | program | context | external)
+#
+# 输出:
+#   - 根本原因分析 (Root cause analysis)
+#   - 错误分类
+#   - 修复建议
+#   - 预防建议
+#
+# 备注: 
+# OpenProse 的错误可能来自四个维度：VM (虚拟机)、Program (程序)、Context (上下文) 或 External (外部因素)。
+
+input run_path: "要调查的运行记录路径"
+input focus: "可选关注领域: vm (虚拟机) | program (程序) | context (上下文) | external (外部因素) (默认: 自动检测)"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent investigator:
+  model: opus
+  prompt: """
+    你负责对失败的 .prose 运行记录进行取证调查。
+
+    你需要有条不紊地追踪执行过程，以找到根本原因：
+    - 阅读 state.md 以获取执行追踪 trace
+    - 检查每个绑定 (binding) 的错误或意外内容
+    - 寻找模式：哪里出了问题？
+    - 区分症状与原因
+  """
+
+agent classifier:
+  model: sonnet
+  prompt: """
+    你负责将错误划分为可采取行动的类别：
+
+    虚拟机 (VM) 错误：OpenProse 虚拟机本身表现异常
+    - 状态管理错误
+    - 错误的控制流
+    - 上下文传递失败
+
+    程序 (Program) 错误：.prose 程序存在问题
+    - 逻辑错误
+    - 缺少错误处理
+    - 代理提示词 (agent prompt) 不当
+
+    上下文 (Context) 错误：上下文退化或臃肿
+    - 代理之间丢失信息
+    - 上下文过大
+    - 传递了错误的上下文
+
+    外部 (External) 错误：外部因素
+    - 工具失效
+    - 网络问题
+    - 资源限制
+  """
+
+agent fixer:
+  model: opus
+  prompt: """
+    你负责为识别出的问题提出具体的修复方案。
+    要具体：展示具体的更改，而不只是描述。
+  """
+
+# ============================================================
+# 阶段 1: 收集证据
+# ============================================================
+
+let evidence = session: investigator
+  prompt: """
+    从失败的运行记录中收集证据。
+
+    运行记录: {run_path}
+
+    阅读并分析：
+    1. state.md - 执行追踪 trace 是什么？停在了哪里？
+    2. bindings/ - 存在哪些绑定？哪些包含错误或内容为空？
+    3. program.prose - 程序原本打算执行什么操作？
+    4. agents/ - 代理内存文件中是否有线索？
+
+    记录：
+    - 最后一次成功的步骤
+    - 第一个出现异常的迹象
+    - 错误消息（如有）
+    - 意外的状态
+
+    返回结构化的证据。
+  """
+
+# ============================================================
+# 阶段 2: 追踪执行
+# ============================================================
+
+let trace = session: investigator
+  prompt: """
+    逐步追踪执行过程以找到失败点。
+
+    证据: {evidence}
+
+    梳理执行过程：
+    1. 程序原本在每个步骤应该做什么？
+    2. 实际上发生了什么（根据 state.md）？
+    3. 预期与实际在何处出现分歧？
+
+    对于分歧点：
+    - 该步骤的输入是什么？
+    - 输出（或缺失的输出）是什么？
+    - 应该发生什么？
+
+    返回格式:
+    {
+      "failure_point": { step, statement, expected, actual },
+      "chain_of_events": [...],
+      "contributing_factors": [...]
+    }
+  """
+  context: evidence
+
+# ============================================================
+# 阶段 3: 错误分类
+# ============================================================
+
+let classification = session: classifier
+  prompt: """
+    为此错误分类。
+
+    追踪 trace: {trace}
+    证据 evidence: {evidence}
+    关注点提示 focus hint: {focus}
+
+    确定：
+    - 主要类别 (vm | program | context | external)
+    - 子类别（该类别下的具体类型）
+    - 严重程度 (critical | major | minor)
+    - 可再现性 (always | sometimes | rare)
+
+    返回格式:
+    {
+      "category": "...",
+      "subcategory": "...",
+      "severity": "...",
+      "reproducibility": "...",
+      "confidence": "high" | "medium" | "low",
+      "reasoning": "..."
+    }
+  """
+  context: { trace, evidence }
+
+# ============================================================
+# 阶段 4: 根本原因分析
+# ============================================================
+
+let root_cause = session: investigator
+  prompt: """
+    确定根本原因 (Root Cause)（不只是症状）。
+
+    追踪 trace: {trace}
+    分类 classification: {classification}
+
+    反复询问 "为什么" (why) 直到触及根本：
+    - 为什么该步骤失败了？
+    - 为什么输入格式错误？
+    - 为什么那个代理产生了那样的输出？
+    - ...
+
+    根本原因是如果在此处进行干预，就能防止失败的最早节点。
+
+    返回格式:
+    {
+      "root_cause": "...",
+      "causal_chain": ["步骤 1", "导致了步骤 2", "最终导致失败"],
+      "root_cause_category": "vm" | "program" | "context" | "external"
+    }
+  """
+  context: { trace, classification }
+
+# ============================================================
+# 阶段 5: 修复建议
+# ============================================================
+
+let fixes = session: fixer
+  prompt: """
+    为本次失败提出修复建议。
+
+    根本原因: {root_cause}
+    分类: {classification}
+    证据: {evidence}
+
+    提供：
+    1. 立即修复措施（如何让这次特定的运行生效）
+    2. 永久修复措施（如何防止此类错误的再次发生）
+    3. 检测手段（下次如何更早地发现此问题）
+
+    要具体。如果是代码更改，请展示差异 (diff)。
+    如果是流程更改，请描述新流程。
+
+    返回格式:
+    {
+      "immediate": { action, details },
+      "permanent": { action, details, files_to_change },
+      "detection": { action, details },
+      "prevention": "如何在未来的程序中避免此问题"
+    }
+  """
+  context: { root_cause, classification, evidence }
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output report = session "格式化报告"
+  prompt: """
+    将取证分析格式化为报告。
+
+    证据: {evidence}
+    追踪 trace: {trace}
+    分类: {classification}
+    根本原因: {root_cause}
+    修复方案: {fixes}
+
+    结构：
+    1. 执行摘要 (Executive Summary)
+       - 什么失败了
+       - 为什么失败（根本原因）
+       - 如何修复
+
+    2. 时间轴 (Timeline)
+       - 突出显示失败点的执行追踪 trace
+
+    3. 根本原因分析 (Root Cause Analysis)
+       - 因果链 (Causal chain)
+       - 错误分类
+
+    4. 建议
+       - 立即修复
+       - 永久修复
+       - 预防措施
+
+    5. 技术细节
+       - 收集的证据
+       - 检查的文件
+
+    使用 Markdown 格式。
+  """
+  context: { evidence, trace, classification, root_cause, fixes }

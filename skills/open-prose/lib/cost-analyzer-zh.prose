@@ -1,0 +1,177 @@
+# 成本分析器 (Cost Analyzer)
+# 分析运行记录 (runs) 的令牌 (token) 使用情况和成本模式
+#
+# 用法:
+#   prose run @openprose/lib/cost-analyzer
+#
+# 输入:
+#   run_path: 要分析的运行记录路径，或使用 "recent" 获取最新记录
+#   scope: single (单次) | compare (比较) | trend (趋势)
+#
+# 输出:
+#   - 按代理 (agent) 或阶段 (phase) 划分的令牌使用明细
+#   - 模型层级 (model tier) 效率分析
+#   - 成本热点
+#   - 优化建议
+#
+# 备注: 
+# OpenProse 程序通过 session 产生令牌。了解哪些 agent 最消耗资源有助于优化成本。
+
+input run_path: "运行记录路径，或使用 'recent' 查看 .prose/runs/ 中的最新运行记录"
+input scope: "分析范围: single (单次运行) | compare (多运行对比) | trend (随时间推移的趋势)"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent collector:
+  model: sonnet
+  prompt: """
+    你负责从 .prose 运行记录中收集并结构化成本/令牌数据。
+
+    从运行工件中提取：
+    - 每个 session 使用的模型 (haiku/sonnet/opus)
+    - 近似的令牌数量（根据内容长度估算）
+    - 每个 agent 的 session 计数
+    - 并行 vs 顺序执行情况
+  """
+
+agent analyzer:
+  model: opus
+  prompt: """
+    你负责分析成本模式并识别优化机会。
+
+    考虑：
+    - 模型层级的适当性（是否需要使用 opus，还是 sonnet 就足够了？）
+    - 令牌效率（上下文 context 是否臃肿？）
+    - 并行化（顺序步骤是否可以改为并行运行？）
+    - 缓存机会（是否有重复的计算？）
+  """
+
+agent tracker:
+  model: haiku
+  persist: user
+  prompt: """
+    你负责跟踪多次运行记录的成本指标，以便进行趋势分析。
+    采用紧凑格式存储：run_id, program, total_cost_estimate, breakdown (明细)。
+  """
+
+# ============================================================
+# 阶段 1: 收集运行数据
+# ============================================================
+
+let runs_to_analyze = session: collector
+  prompt: """
+    查找要分析的运行记录。
+
+    输入: {run_path}
+    分析范围: {scope}
+
+    如果 run_path 是特定路径，则使用该记录。
+    如果 run_path 是 "recent"，则查找 .prose/runs/ 中最新的 5-10 条记录。
+
+    对于 scope=compare (对比)，查找同一程序的运行记录。
+    对于 scope=trend (趋势)，查找一段时间内的运行记录。
+
+    返回：要分析的运行记录路径列表。
+  """
+
+let run_data = runs_to_analyze | pmap:
+  session: collector
+    prompt: """
+      从运行记录中提取成本数据：{item}
+
+      阅读 state.md 和 bindings/ 以确定：
+      1. 程序名称
+      2. 产生的每个 session：
+         - 代理 (agent) 名称（或为 "anonymous" 匿名）
+         - 模型层级 (model tier)
+         - 估算的输入令牌（上下文大小）
+         - 估算的输出令牌（绑定大小）
+      3. 并行块（有多少并发 session）
+      4. session 总数
+
+      使用粗略的费率估算成本：
+      - haiku: 输入 $0.25 / 100万, 输出 $1.25 / 100万
+      - sonnet: 输入 $3 / 100万, 输出 $15 / 100万
+      - opus: 输入 $15 / 100万, 输出 $75 / 100万
+
+      返回结构化的 JSON 格式。
+    """
+    context: item
+
+# ============================================================
+# 阶段 2: 分析
+# ============================================================
+
+let analysis = session: analyzer
+  prompt: """
+    分析这些运行记录的成本模式。
+
+    数据: {run_data}
+    范围: {scope}
+
+    针对单次运行 (single run)：
+    - 按 agent 和阶段分解成本
+    - 识别最昂贵的操作
+    - 标记潜在的效率低下之处
+
+    针对对比分析 (compare)：
+    - 显示不同运行记录之间的成本差异
+    - 识别哪些更改影响了成本
+    - 注意成本是增加了还是减少了
+
+    针对趋势分析 (trend)：
+    - 显示一段时间内的成本变化
+    - 识别成本是稳定的、增长的还是在改善
+    - 标记异常值
+
+    始终包含：
+    - 模型层级效率（昂贵模型的使用是否得当？）
+    - 上下文效率（上下文是精简的还是臃肿的？）
+    - 具体的优化建议
+
+    返回结构化的 JSON，包含：
+    {
+      "summary": { total_cost, session_count, by_model: {...} },
+      "hotspots": [ { agent, cost, percent, issue } ],
+      "recommendations": [ { priority, description, estimated_savings } ],
+      "details": { ... }
+    }
+  """
+  context: run_data
+
+# ============================================================
+# 阶段 3: 趋势跟踪
+# ============================================================
+
+resume: tracker
+  prompt: """
+    记录本次成本分析，用于未来的趋势跟踪。
+
+    {analysis.summary}
+
+    将其添加到你的历史记录中。
+  """
+  context: analysis
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output report = session "格式化报告"
+  prompt: """
+    将成本分析格式化为易读的报告。
+
+    分析结果: {analysis}
+
+    包含内容：
+    1. 执行摘要 (executive summary)（总成本、核心发现）
+    2. 成本明细表
+    3. 成本热点（资金流向何处）
+    4. 建议（按优先级排序）
+    5. 如果 scope=trend，包含趋势图（ASCII 或文本描述）
+
+    使用 Markdown 格式。
+  """
+  context: analysis

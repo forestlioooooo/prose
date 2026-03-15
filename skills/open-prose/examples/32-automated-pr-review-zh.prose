@@ -1,0 +1,43 @@
+# 自动化 PR 审查工作流
+# 此工作流对代码库更改执行多维度的审查。
+
+# 审查者代理：通用代码审查专家
+agent reviewer:
+  model: sonnet
+  prompt: "你是一名专门从事代码审查的专家软件工程师。"
+
+# 安全专家代理：专注于漏洞发现
+agent security_expert:
+  model: opus
+  prompt: "你是一名专门发现漏洞的安全研究员。"
+
+# 性能专家代理：专注于优化
+agent performance_expert:
+  model: sonnet
+  prompt: "你是一名专门从事优化的性能工程师。"
+
+# 1. 初始概览
+# 备注：首先获取更改的高级摘要，为后续深入审查提供上下文
+let overview = session: reviewer
+  prompt: "读取当前目录中的更改，并提供对架构影响的高级摘要。"
+
+# 2. 并行深入审查
+# 备注：并行执行安全、性能和风格审查，提高审查效率
+parallel:
+  security = session: security_expert
+    prompt: "对更改执行深入的安全审计。查找 OWASP Top 10 问题。"
+    context: overview
+  
+  perf = session: performance_expert
+    prompt: "分析性能影响。识别潜在的瓶颈或回归。"
+    context: overview
+  
+  style = session: reviewer
+    prompt: "审查代码风格、可维护性和对最佳实践的遵守情况。"
+    context: overview
+
+# 3. 综合和最终建议
+# 备注：将所有审查结果综合成最终的 PR 评论，提供明确的审查建议
+session: reviewer
+  prompt: "将安全、性能和风格审查综合成最终的 PR 评论。提供明确的 '批准'、'请求更改' 或 '评论' 建议。"
+  context: { security, perf, style, overview }

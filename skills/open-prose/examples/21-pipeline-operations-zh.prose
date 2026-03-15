@@ -1,0 +1,46 @@
+# 管道操作示例
+# 演示函数式风格的集合转换
+
+# 定义创业想法的集合
+# 备注：let 关键字创建变量，存储字符串数组
+let ideas = ["AI tutor", "smart garden", "fitness tracker", "meal planner", "travel assistant"]
+
+# 过滤以保留仅关注技术的想法
+# 备注：| filter 管道操作符过滤集合，只保留满足条件的元素
+# item 关键字代表当前正在处理的元素
+let tech_ideas = ideas | filter:
+  session "这个想法是否主要关注技术？回答是或否。"
+    context: item
+
+# 映射以将每个想法扩展为商业提案
+# 备注：| map 管道操作符将集合中的每个元素转换为新值
+# 每个元素通过会话处理，生成新的结果集合
+let pitches = tech_ideas | map:
+  session "为这个想法撰写一个引人注目的一段式商业提案"
+    context: item
+
+# 将所有提案归约为投资组合摘要
+# 备注：| reduce 管道操作符将集合归约为单个值
+# reduce(summary, pitch): 参数中，summary 是累积值，pitch 是当前元素
+let portfolio = pitches | reduce(summary, pitch):
+  session "将此提案整合到投资组合摘要中，保持连贯性"
+    context: [summary, pitch]
+
+# 呈现最终投资组合
+# 备注：使用归约后的结果作为上下文，生成最终输出
+session "格式化并呈现创业投资组合为精美的文档"
+  context: portfolio
+
+# 并行映射示例 - 同时研究多个主题
+# 备注：| pmap 是并行映射，同时处理集合中的所有元素
+# 这显著提高了处理多个独立任务时的效率
+let topics = ["market analysis", "competition", "funding options"]
+
+let research = topics | pmap:
+  session "研究创业投资组合的这个方面"
+    context: item
+
+# 最终综合
+# 备注：将所有并行研究结果综合成执行摘要
+session "创建综合所有研究发现的高管摘要"
+  context: research

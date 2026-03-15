@@ -1,0 +1,141 @@
+# 观察站 (Observatory)
+# 星座 (Constellation) 之镜 — 感知而不参与
+#
+# 观察站负责观察。它不干预所见之物；它为那些希望了解星座而不加入其中的人
+# 综合、报告并阐明模式。
+#
+# 荷隆 (Holon) 参与，观察站则进行沉思。
+
+input duration: "观察时长：'snapshot' (单次快照)、'session' (会话/10个周期) 或 'extended' (延长/50个周期)"
+input focus: "关注对象：'all' (全部)、'live' (活跃中)、'recent' (近期完成) 或特定的所有者句柄 (handle)"
+input output_format: "报告格式：'narrative' (叙述型)、'structured' (结构化型) 或 'chronicle' (编年史型)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent lens:
+  model: haiku
+  prompt: """
+    你是透镜 (Lens) — 负责感知的职能。
+
+    你观察星座的表面：哪些荷隆正在展开，哪些已经完成，谁在活跃，正在运行什么程序。
+
+    API: {CONSTELLATION_API}
+
+    端点：
+    - GET /executions/live?limit=50 → 当前正在展开的荷隆
+    - GET /executions/recent?limit=50 → 近期已完成的模式
+
+    对于每个观察周期，调用上述两个端点并报告：
+
+    ```
+    时间戳：[ISO 时间戳]
+
+    活跃荷隆 ({count})：
+    - {id}: {owner.handle 或 "anon"} — "{programPreview}" — 已运行 {duration}
+
+    近期完成 ({count})：
+    - {id}: {status} 由 {owner.handle} 完成 — "{programPreview}" — {completedAt}
+
+    活动水平：[安静 / 中等 / 活跃 / 剧烈]
+    ```
+
+    如果关注对象是特定句柄，请过滤并仅显示该所有者的执行情况。
+    清晰地感知。如实地报告。
+  """
+
+agent synthesizer:
+  model: haiku
+  prompt: """
+    你是综合员 (Synthesizer) — 负责发现模式的职能。
+
+    根据随时间收集的多次观察结果，你负责识别：
+    - 趋势：活动是在增加、减少还是稳定？
+    - 聚类：某些所有者是否特别活跃？
+    - 主题：正在运行什么类型的程序？
+    - 异常：是否有任何不同寻常或值得注意的地方？
+    - 节奏：在时间分布上是否存在模式？
+
+    你不做评判，也不参与其中。你负责阐明现状。
+
+    输出格式取决于请求：
+
+    叙述型 (NARRATIVE)：对观察结果的文字描述，供人类阅读。
+
+    结构化型 (STRUCTURED)：包含计数、百分比和列表的类 JSON 数据。
+
+    编年史型 (CHRONICLE)：重大事件的带时间戳日志，适合存档。
+  """
+
+agent scribe:
+  model: haiku
+  prompt: """
+    你是抄写员 (Scribe) — 负责记录的职能。
+
+    你负责将观察结果和综合分析编译成最终报告。
+    报告应当：
+    - 完整：包含所有相关数据
+    - 清晰：在没有背景信息的情况下也能被理解
+    - 有用：对想要了解星座的人具有可参考价值
+
+    根据请求的输出格式 (output_format) 构建报告结构。
+  """
+
+# --- 处理流程 (Processes) ---
+
+block observe_once():
+  output snapshot = session: lens
+    prompt: "观察星座的当前状态"
+    context: focus
+
+block synthesize_observations(observations):
+  output synthesis = session: synthesizer
+    prompt: "从这些观察中综合发现模式"
+    context: { observations, output_format }
+
+block compile_report(observations, synthesis):
+  output report = session: scribe
+    prompt: "编译最终的观察站报告"
+    context: { observations, synthesis, output_format, duration }
+
+# --- 观察环节 (Observation) ---
+
+let observations = []
+
+choice **观察时长**:
+
+  option "snapshot":
+    # 单次观察
+    let snap = do observe_once()
+    observations = [snap]
+
+  option "session":
+    # 10 个观察周期
+    repeat 10 as cycle:
+      let obs = do observe_once()
+      observations = observations + [obs]
+
+      if **not the last cycle**:
+        session "暂停"
+          prompt: "在下次观察前等待 30 秒。使用 Bash 进行休眠。"
+
+  option "extended":
+    # 50 个观察周期
+    repeat 50 as cycle:
+      let obs = do observe_once()
+      observations = observations + [obs]
+
+      if **not the last cycle**:
+        session "暂停"
+          prompt: "在下次观察前等待 60 秒。使用 Bash 进行休眠。"
+
+# --- 综合环节 (Synthesis) ---
+
+let patterns = do synthesize_observations(observations)
+
+# --- 报告环节 (Report) ---
+
+output observatory_report = do compile_report(observations, patterns)

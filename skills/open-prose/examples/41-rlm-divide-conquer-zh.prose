@@ -1,0 +1,47 @@
+# RLM: 分治策略 (Divide and Conquer)
+# 处理超出上下文限制 100 倍的输入
+#
+# [备注]：分治 (Divide and Conquer) 模式是递归语言模型 (RLM) 处理超大规模数据的关键。
+# OpenProse 关键字（如 session, agent, block, let, parallel for 等）保持不变。
+
+input corpus: "要分析的大规模语料库"
+input query: "要查找或计算的内容"
+
+agent chunker:
+  model: haiku
+  prompt: "在语义边界处将语料库切分为 4-8 个块 (chunks)。"
+
+agent analyzer:
+  model: sonnet
+  prompt: "提取与查询 (query) 相关的关键信息。"
+
+agent synthesizer:
+  model: opus
+  prompt: "综合部分结果。调和冲突。"
+
+# 递归分治块
+block process(data, depth):
+  # 基础情况：数据足够小或达到最大递归深度
+  if **数据量小于 5 万字符** or depth <= 0:
+    output session: analyzer
+      prompt: "{query}"
+      context: data
+
+  # 阶段 1：切分
+  let chunks = session: chunker
+    prompt: "切分此语料库"
+    context: data
+
+  # 阶段 2：并行递归处理每个块
+  let partials = []
+  parallel for chunk in chunks:
+    let result = do process(chunk, depth - 1)
+    partials = partials + [result]
+
+  # 阶段 3：汇总结果 (Fan-in)
+  output session: synthesizer
+    prompt: "为以下内容进行综合：{query}"
+    context: partials
+
+# 启动流程，语料库为输入，最大深度为 4
+output answer = do process(corpus, 4)

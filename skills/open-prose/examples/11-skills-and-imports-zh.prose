@@ -1,0 +1,32 @@
+# 技能和导入示例
+# 此示例展示如何导入外部技能并将其分配给代理。
+
+# 从外部源导入技能
+# 备注：OpenProse 支持从多种源导入技能，包括 GitHub、npm 和本地文件
+import "web-search" from "github:anthropic/skills"
+import "summarizer" from "npm:@example/summarizer"
+import "file-reader" from "./local-skills/file-reader"
+
+# 定义具有网络搜索能力的研究代理
+# 备注：代理可以通过 skills 字段配置多个技能，增强其能力
+agent researcher:
+  model: sonnet
+  prompt: "你是一名擅长查找信息的研究助理"
+  skills: ["web-search", "summarizer"]
+
+# 定义具有文件访问功能的文档代理
+# 备注：不同代理可以共享相同技能，每个代理根据其角色使用技能
+agent documenter:
+  model: opus
+  prompt: "你创建全面的文档"
+  skills: ["file-reader", "summarizer"]
+
+# 研究阶段
+# 备注：研究代理使用 web-search 技能查找最新信息，并使用 summarizer 技能总结结果
+session: researcher
+  prompt: "搜索可再生能源存储领域的最新进展"
+
+# 文档阶段
+# 备注：文档代理使用 file-reader 技能读取相关文件，然后创建技术摘要
+session: documenter
+  prompt: "创建研究结果的技术摘要"

@@ -1,0 +1,176 @@
+# PR 审查 + 自动修复
+#
+# 一个自我修复的代码审查管道。从多个角度审查 PR，
+# 识别问题，并在循环中自动修复它们，直到
+# 审查通过。看着问题被一个个解决，令人满意。
+#
+# 用法：针对您代码库中的任何开放 PR 运行。
+
+# 审查者代理：高级代码审查员
+agent reviewer:
+  model: sonnet
+  prompt: """
+你是一名高级代码审查员。你审查代码的：
+- 正确性和逻辑错误
+- 安全漏洞
+- 性能问题
+- 代码风格和可读性
+
+要具体。引用确切的文件路径和行号。
+返回结构化的问题列表，如果没有发现问题则返回 "APPROVED"。
+"""
+
+# 安全审查者代理：安全专家
+# 备注：安全审查需要深度推理，因此使用最强大的模型
+agent security-reviewer:
+  model: opus          # 安全需要深度推理
+  prompt: """
+你是一名安全专家。专门关注：
+- 注入漏洞（SQL、命令、XSS）
+- 身份验证/授权缺陷
+- 数据暴露和隐私问题
+- 密码学弱点
+
+如果发现问题，它们是高优先级。要彻底。
+"""
+
+# 修复者代理：代码修复者
+# 备注：修复需要理解 + 执行，因此使用强大的模型
+agent fixer:
+  model: opus          # 修复需要理解 + 执行
+  prompt: """
+你是一名代码修复者。给定一个问题报告：
+1. 理解根本原因
+2. 实施最小修复
+3. 验证修复是否解决问题
+4. 创建干净的提交
+
+不要过度设计。精确修复报告的内容，不多不少。
+"""
+
+# 船长代理：协调 PR 审查过程
+agent captain:
+  model: sonnet        # 编排角色
+  persist: true
+  prompt: """
+你协调 PR 审查过程。你：
+- Track which issues have been found and fixed
+- Decide when the PR is ready to merge
+- Escalate to human if something is unfixable
+"""
+
+# 获取 PR 差异
+# 备注：使用 GitHub CLI 获取 PR 差异和元数据
+let pr_diff = session "获取 PR 差异"
+  prompt: """
+读取当前 PR：
+1. 运行：gh pr diff
+2. 同时获取：gh pr view --json title,body,files
+3. 返回完整的差异和 PR 元数据
+"""
+
+# 阶段 1：并行多角度审查
+session: captain
+  prompt: "开始 PR 审查。我将协调多个审查员。"
+
+parallel:
+  general_review = session: reviewer
+    prompt: "审查此 PR 的正确性、逻辑和风格问题"
+    context: pr_diff
+
+  security_review = session: security-reviewer
+    prompt: "安全审计此 PR。标记任何漏洞。"
+    context: pr_diff
+
+  test_check = session "检查测试覆盖"
+    prompt: """
+分析 PR：
+1. 什么代码更改了？
+2. 是否有针对更改的测试？
+3. 运行现有测试：npm test / pytest / cargo test
+返回：测试状态和覆盖差距
+"""
+    context: pr_diff
+
+# 阶段 2：船长综合和优先级排序
+let issues = resume: captain
+  prompt: """
+将所有审查反馈综合成优先级排序的问题列表。
+将每个问题格式化为：
+- ID: issue-N
+- Severity: critical/high/medium/low
+- File: path/to/file.ts
+- Line: 42
+- Issue: description
+- Fix: suggested approach
+
+如果所有审查都通过，返回 "ALL_CLEAR"。
+"""
+  context: { general_review, security_review, test_check }
+
+# 阶段 3：自动修复循环
+# 备注：循环直到所有问题解决或无法修复，最多10次迭代
+loop until **all issues are resolved or unfixable** (max: 10):
+
+  if **there are no remaining issues**:
+    resume: captain
+      prompt: "所有问题已解决！总结修复的内容。"
+  else:
+    # 选择最高优先级的未修复问题
+    let current_issue = resume: captain
+      prompt: "选择下一个最高优先级的问题进行修复。"
+      context: issues
+
+    # 尝试修复
+    try:
+      session: fixer
+        prompt: """
+修复此问题：
+{current_issue}
+
+步骤：
+1. 读取文件
+2. 理解上下文
+3. 实施修复
+4. 运行测试以验证
+5. 提交消息："fix: [问题描述]"
+"""
+        context: current_issue
+        retry: 2
+        backoff: exponential
+
+      # 标记为已修复
+      resume: captain
+        prompt: "问题已修复。更新跟踪并检查剩余问题。"
+        context: current_issue
+
+    catch as fix_error:
+      # 升级无法修复的问题
+      resume: captain
+        prompt: """
+修复尝试失败。确定这是：
+1. 可重试（使用不同方法）
+2. 需要人工干预
+3. 假阳性（实际上不是问题）
+
+相应更新问题状态。
+"""
+        context: { current_issue, fix_error }
+
+# 阶段 4：最终验证
+let final_review = session: reviewer
+  prompt: "最终审查通过。验证所有修复是否正确和完整。"
+
+resume: captain
+  prompt: """
+PR 审查完成！
+
+生成最终报告：
+- 发现的问题：N
+- 修复的问题：N
+- 需要人工审查的问题：N
+- 建议：MERGE / NEEDS_ATTENTION / BLOCK
+
+如果准备就绪，运行：gh pr review --approve
+"""
+  context: final_review

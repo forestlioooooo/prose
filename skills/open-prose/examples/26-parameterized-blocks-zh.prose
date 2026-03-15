@@ -1,0 +1,102 @@
+# 参数化块示例
+# 演示具有参数的可重用块，用于 DRY（不重复自己）工作流
+
+# 简单参数化块
+# 备注：block 关键字定义可重用代码块，参数在括号中指定
+# 块内的会话可以使用 {parameter_name} 语法引用参数值
+block research(topic):
+  session "深入研究 {topic}"
+  session "总结关于 {topic} 的关键发现"
+  session "列出关于 {topic} 的开放问题"
+
+# 使用不同参数调用
+do research("quantum computing")
+do research("machine learning")
+do research("blockchain technology")
+
+# 具有多个参数的块
+block review_code(language, focus_area):
+  session "审查 {language} 代码中的 {focus_area} 问题"
+  session "为 {language} 提出 {focus_area} 改进建议"
+  session "提供 {language} 的 {focus_area} 最佳实践"
+
+do review_code("Python", "performance")
+do review_code("TypeScript", "type safety")
+do review_code("Rust", "memory safety")
+
+# 用于数据处理的参数化块
+block process_dataset(source, format):
+  session "从 {source} 加载数据"
+  session "验证 {format} 结构"
+  session "转换为标准格式"
+  session "为 {source} 数据生成质量报告"
+
+do process_dataset("sales_db", "CSV")
+do process_dataset("api_logs", "JSON")
+do process_dataset("user_events", "Parquet")
+
+# 在控制流中使用参数的块
+block test_feature(feature_name, test_level):
+  session "为 {feature_name} 编写 {test_level} 测试"
+
+  if **the tests reveal issues**:
+    session "修复 {feature_name} 中的问题"
+    session "重新运行 {feature_name} 的 {test_level} 测试"
+  else:
+    session "标记 {feature_name} {test_level} 测试完成"
+
+do test_feature("authentication", "unit")
+do test_feature("payment processing", "integration")
+do test_feature("user dashboard", "e2e")
+
+# 并行中的参数化块
+block analyze_competitor(company):
+  session "研究 {company} 产品"
+  session "分析 {company} 市场地位"
+  session "识别 {company} 的优势和劣势"
+
+parallel:
+  a = do analyze_competitor("Company A")
+  b = do analyze_competitor("Company B")
+  c = do analyze_competitor("Company C")
+
+session "创建竞争分析报告"
+  context: { a, b, c }
+
+# 具有错误处理的块
+block safe_api_call(endpoint, method):
+  try:
+    session "使用 {method} 请求调用 {endpoint}"
+      retry: 3
+      backoff: "exponential"
+  catch as err:
+    session "记录失败的 {method} 调用到 {endpoint}"
+      context: err
+    session "为 {endpoint} 返回备选响应"
+
+do safe_api_call("/users", "GET")
+do safe_api_call("/orders", "POST")
+do safe_api_call("/inventory", "PUT")
+
+# 嵌套块调用
+block full_review(component):
+  do review_code("TypeScript", "security")
+  do test_feature(component, "unit")
+  session "为 {component} 生成文档"
+
+do full_review("UserService")
+do full_review("PaymentGateway")
+
+# 内部有循环的块
+block process_batch(batch_name, items):
+  session "开始处理 {batch_name}"
+  for item in items:
+    session "处理来自 {batch_name} 的项目"
+      context: item
+  session "完成 {batch_name} 处理"
+
+let batch1 = ["a", "b", "c"]
+let batch2 = ["x", "y", "z"]
+
+do process_batch("alpha", batch1)
+do process_batch("beta", batch2)

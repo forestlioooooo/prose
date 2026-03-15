@@ -1,0 +1,254 @@
+# 审计员 (Auditor)
+# 质量审查 — 检查程序是否符合最佳实践和标准
+#
+# 审计员根据质量标准审查已发布的程序，对其进行评分并发布评估结果。
+# 这有助于星座 (Constellation) 维持标准，并帮助用户找到制作精良的程序。
+#
+# 审计员是严谨且建设性的。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input target: "审计对象：'@handle/slug' (特定程序) 或 'handle' (某位用户的所有程序)"
+input depth: "审计深度：'quick' (表面检查)、'standard' (全面审查)、'deep' (综合分析)"
+input publish_review: "是否发布审查结果：'yes' 或 'no'"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 质量标准 (Quality Criteria) ---
+
+const QUALITY_CRITERIA = """
+结构得分 (STRUCTURE, 0-25 分)：
+- 具有清晰的程序标题、名称和描述
+- 代理 (Agents)、代码块 (Blocks) 和流程组织逻辑清晰
+- 输入 (Inputs) 和输出 (Outputs) 使用得当
+- 缩进和格式保持一致
+
+代理得分 (AGENTS, 0-25 分)：
+- 所有代理均使用 model: haiku (以保证效率)
+- 提示词 (Prompts) 清晰且具体
+- 每个代理职责单一
+- 命名得当
+
+鲁棒性得分 (ROBUSTNESS, 0-25 分)：
+- 错误处理 (在适当位置使用 try/catch)
+- 输入验证或优雅的异常处理
+- 循环具有合理的边界限制
+- 不包含硬编码的凭据或秘密信息
+
+文档得分 (DOCUMENTATION, 0-25 分)：
+- 清晰解释程序目的
+- 对输入进行了文档化说明
+- 包含使用示例或说明
+- 对非显而易见的逻辑进行了注释说明
+
+加分/扣分项：
++5: 方案特别优雅或具有创新性
++5: 设计具有可重用性和可组合性
+-10: 安全问题 (凭据泄露、注入风险)
+-10: 名称或描述具有误导性
+-5: 相对于任务而言过于复杂
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent fetcher:
+  model: haiku
+  prompt: """
+    你是获取者 (Fetcher) — 负责检索待审计的程序。
+
+    API: {CONSTELLATION_API}
+
+    对于特定程序 (@handle/slug):
+    ```bash
+    curl -s "{CONSTELLATION_API}/programs/@{handle}/{slug}"
+    curl -s "{CONSTELLATION_API}/programs/@{handle}/{slug}/raw"
+    ```
+
+    对于某位用户的所有程序：
+    - 首先获取程序列表 (需要该用户自己的授权)
+    - 或者搜索该句柄 (handle) 的近期执行记录以查找程序
+
+    返回：{ programs: [{ path, name, description, source }] }
+  """
+
+agent reviewer:
+  model: haiku
+  prompt: """
+    你是审查员 (Reviewer) — 负责根据质量标准评估程序。
+
+    标准：
+    {QUALITY_CRITERIA}
+
+    对于每个程序，评估：
+    1. 结构 (STRUCTURE)：组织、格式、流程
+    2. 代理 (AGENTS)：模型使用、提示词、命名
+    3. 鲁棒性 (ROBUSTNESS)：错误处理、边界、安全
+    4. 文档 (DOCUMENTATION)：注释、描述、清晰度
+
+    为每个类别打分 (0-25)，并给出具体观察结果。
+    根据情况应用加分/扣分。
+
+    计算总分 (0-100+)。
+
+    等级划分：
+    - 90+: 模范 (Exemplary)
+    - 80-89: 良好 (Good)
+    - 70-79: 合格 (Acceptable)
+    - 60-69: 有待改进 (Needs Improvement)
+    - <60: 差 (Poor)
+
+    返回：{ scores: {...}, total, grade, observations: [...], recommendations: [...] }
+  """
+
+agent comparator:
+  model: haiku
+  prompt: """
+    你是比较器 (Comparator) — 对于深度审计，负责与同类程序进行对比。
+
+    给定一个程序和星座的近期活动：
+    - 查找同类程序 (按目的、结构或作者)
+    - 比较实现方法
+    - 记录该程序的优劣之处
+    - 识别整个生态系统中的模式
+
+    返回：{ comparisons: [...], relative_quality, ecosystem_observations }
+  """
+
+agent reporter:
+  model: haiku
+  prompt: """
+    你是报告员 (Reporter) — 负责将审计结果编译成易读的报告。
+
+    格式化审计报告：
+
+    ```
+    ════════════════════════════════════════
+    审计审查报告 (AUDITOR REVIEW)
+    程序路径：{path}
+    日期：{timestamp}
+    审计深度：{depth}
+    ════════════════════════════════════════
+
+    综合评价：{grade} ({total}/100)
+
+    各项得分：
+    ├── 结构 (Structure):     {score}/25
+    ├── 代理 (Agents):        {score}/25
+    ├── 鲁棒性 (Robustness):  {score}/25
+    └── 文档 (Documentation): {score}/25
+        得分调整：           {加分/扣分}
+
+    观察结果：
+    {具体观察结果的要点列表}
+
+    核心优势：
+    {程序表现优异的地方}
+
+    改进建议：
+    {具体的、可操作的建议}
+
+    ════════════════════════════════════════
+    ```
+
+    如果审计了多个程序，请先创建一个摘要表。
+  """
+
+agent publisher:
+  model: haiku
+  prompt: """
+    你是发布者 (Publisher) — 负责将审计报告发布到星座。
+
+    API: {CONSTELLATION_API}
+
+    将审查结果作为公共执行发布：
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "program": "# Auditor Review: {program_path}\\n# Grade: {grade}\\nsession \"Publish review\"",
+        "visibility": "PUBLIC"
+      }'
+    ```
+
+    返回：{ published: true, reviewId: "..." }
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，审计员无法运行"
+
+  output access = passage
+
+block fetch_programs():
+  output programs = session: fetcher
+    prompt: "获取待审计程序"
+    context: target
+
+block review_program(program):
+  output review = session: reviewer
+    prompt: "根据质量标准审查此程序"
+    context: { program, QUALITY_CRITERIA, depth }
+
+block compare_programs(program, reviews):
+  output comparison = session: comparator
+    prompt: "将此程序与同类程序进行对比"
+    context: { program, reviews }
+
+block compile_report(reviews, comparisons):
+  output report = session: reporter
+    prompt: "编译审计报告"
+    context: { reviews, comparisons, depth }
+
+block publish_report(report, token):
+  output publication = session: publisher
+    prompt: "将此审计报告发布到星座"
+    context: { report, token }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 获取程序
+let programs = do fetch_programs()
+
+# 审查每个程序
+let reviews = []
+
+for program in programs.programs:
+  let review = do review_program(program)
+  reviews = reviews + [{ program, review }]
+
+# 深度审计包含对比环节
+let comparisons = null
+if **depth is deep**:
+  comparisons = do compare_programs(programs.programs[0], reviews)
+
+# 编译报告
+let report = do compile_report(reviews, comparisons)
+
+# 如果请求，则发布报告
+if **publish_review is yes**:
+  output published = do publish_report(report, access.token)
+else:
+  output published = { published: false }
+
+output audit_report = report

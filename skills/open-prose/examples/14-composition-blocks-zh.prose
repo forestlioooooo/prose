@@ -1,0 +1,55 @@
+# 示例 14：组合块
+# 演示 do: 块、块定义和内联序列
+
+# 定义可重用的代理
+# 备注：定义多个专门代理，每个代理负责特定类型的任务
+agent researcher:
+  model: sonnet
+  prompt: "你是一名细致的研究助理"
+
+agent writer:
+  model: opus
+  prompt: "你是一名熟练的技术文档编写者"
+
+agent reviewer:
+  model: sonnet
+  prompt: "你是一名细致的代码和文档审查员"
+
+# 定义可重用的研究块
+# 备注：block 关键字定义可重用代码块，包含多个会话序列
+# 这类似于函数或模块，可以封装常用工作流
+block research-phase:
+  session: researcher
+    prompt: "收集关于主题的信息"
+  session: researcher
+    prompt: "分析关键发现"
+
+# 定义可重用的写作块
+# 备注：块可以包含多个步骤，实现复杂工作流的封装
+block writing-phase:
+  session: writer
+    prompt: "编写初始草稿"
+  session: writer
+    prompt: "润色和改进草稿"
+
+# 定义审查块
+# 备注：审查块专注于质量保证，展示块的模块化设计
+block review-cycle:
+  session: reviewer
+    prompt: "审查准确性"
+  session: reviewer
+    prompt: "审查清晰度"
+
+# 使用块的主要工作流
+# 备注：do 关键字执行已定义的块，块可以返回结果（如果有输出）
+let research = do research-phase
+
+let document = do writing-phase
+
+do review-cycle
+
+# 使用匿名 do 块进行最终步骤
+# 备注：匿名 do 块允许定义内联序列，无需单独命名
+do:
+  session "纳入审查反馈"
+  session "准备最终版本"

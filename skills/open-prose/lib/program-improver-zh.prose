@@ -1,0 +1,278 @@
+# 程序改进器 (Program Improver)
+# 分析检查报告并对 .prose 源代码提出改进建议
+#
+# 用法:
+#   prose run @openprose/lib/program-improver
+#
+# 输入:
+#   inspection_path: 检查绑定 (inspection binding) 的路径
+#   run_path: 被检查运行记录的路径（用于查找 program.prose）
+#
+# 输出: 如果源代码仓库可访问，则生成 PR；否则生成建议文件
+#
+# 备注: 
+# 此工具将分析 inspection.prose 产生的结果，并将其转化为对源代码的具体改进建议。
+
+input inspection_path: "检查结果路径 (例如: bindings/inspection.md)"
+input run_path: "被检查的运行记录目录路径"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent locator:
+  model: sonnet
+  prompt: """
+    你负责寻找 .prose 程序的源代码位置。
+
+    检查：
+    - 程序头部是否有注册表引用（例如 @handle/slug）
+    - 本地文件路径
+    - 源代码仓库是否可访问以创建 PR
+  """
+
+agent analyst:
+  model: opus
+  prompt: """
+    你负责从 OpenProse 检查报告中分析程序改进机会。
+
+    寻找：
+    - 模型层级 (model tier) 错误（在 sonnet 足够的地方使用了 opus，反之亦然）
+    - 缺少错误处理（对风险操作没有使用 try/catch）
+    - 控制流 (control flow) 不佳（在可以使用并行的地方使用了顺序执行）
+    - 上下文 (context) 传递问题（传递了过多内容，或者丢失了关键上下文）
+    - 不必要的复杂性（对于该任务过度设计）
+    - 缺少并行化（独立的多个操作按顺序运行）
+    - 代理提示词 (agent prompt) 问题（模糊、缺少约束、角色设定错误）
+
+    要具体。引用检查报告中的证据。
+  """
+
+agent implementer:
+  model: opus
+  prompt: """
+    你负责改进 .prose 程序，同时保留其意图。
+
+    规则：
+    - 保持整体结构不变
+    - 进行最小限度的、有针对性的更改
+    - 遵循 OpenProse 惯用写法
+    - 保留注释和文档
+    - 每次更改只针对一个逻辑上的改进
+  """
+
+agent pr_author:
+  model: sonnet
+  prompt: """
+    你负责创建分支和拉取请求 (PR)，或者编写改进建议文件。
+  """
+
+# ============================================================
+# 阶段 1: 定位程序源代码
+# ============================================================
+
+let source_info = session: locator
+  prompt: """
+    找到被检查程序的源代码。
+
+    运行路径: {run_path}
+
+    步骤：
+    1. 阅读 {run_path}/program.prose
+    2. 检查头部是否有注册表引用（例如 # from: @handle/slug）
+    3. 检查它是否为 lib/ 程序（即 OpenProse 的一部分）
+    4. 确定我们是否可以创建 PR
+
+    返回 JSON:
+    {
+      "program_name": "来自头部或文件名的程序名称",
+      "registry_ref": "@handle/slug 或 null",
+      "source_type": "lib" (库程序) | "local" (本地) | "registry" (注册表) | "unknown",
+      "source_path": "源代码原始路径或 null",
+      "source_repo": "git 仓库 URL 或 null",
+      "can_pr": true/false,
+      "program_content": "程序源代码全文"
+    }
+  """
+  context: run_path
+
+# ============================================================
+# 阶段 2: 分析改进机会
+# ============================================================
+
+let analysis = session: analyst
+  prompt: """
+    分析此程序及其检查报告，识别改进机会。
+
+    程序源代码：
+    {source_info.program_content}
+
+    检查报告: {inspection_path}
+
+    针对每个机会，明确：
+    - category (类别): model-tier | error-handling | flow | context | complexity | parallel | prompts
+    - description (描述): 什么可以改进
+    - severity (严重程度): low | medium | high
+    - location (位置): 程序的哪一部分（代理名称、阶段、行号范围）
+    - evidence (证据): 检查报告中的哪些内容暗示了这一点
+    - proposed_fix (拟定修复方案): 对更改的简短描述
+
+    返回 JSON:
+    {
+      "program_name": "{source_info.program_name}",
+      "opportunities": [...],
+      "priority_order": [按影响排序的索引列表]
+    }
+  """
+  context: { source_info, inspection_path }
+
+if **没有发现可采取行动的机会**:
+  output result = {
+    status: "no-improvements-needed",
+    source_info: source_info,
+    analysis: analysis,
+    message: "程序执行良好，没有明显的改进之处"
+  }
+
+# ============================================================
+# 阶段 3: 用户选择
+# ============================================================
+
+input selection: """
+  ## 程序改进机会 (Program Improvement Opportunities)
+
+  程序: {source_info.program_name}
+  来源: {source_info.source_type} ({source_info.source_path})
+  是否可以创建 PR: {source_info.can_pr}
+
+  ### 发现的机会：
+  {analysis.opportunities}
+
+  ---
+
+  我应该执行哪些改进？
+  - 请列出编号
+  - 或者输入 "all" 以执行全部改进
+  - 或者输入 "none" 以跳过
+"""
+
+if **用户选择 none (无) 或想要跳过**:
+  output result = {
+    status: "skipped",
+    source_info: source_info,
+    analysis: analysis
+  }
+
+let selected = session "解析用户选择"
+  prompt: "提取被选中的机会索引列表"
+  context: { selection, analysis }
+
+# ============================================================
+# 阶段 4: 执行更改
+# ============================================================
+
+let implementation = session: implementer
+  prompt: """
+    对此程序实施被选中的改进。
+
+    原始程序：
+    {source_info.program_content}
+
+    被选中的机会: {selected}
+    完整分析: {analysis}
+
+    编写改进后的程序。执行所有选定的更改。
+
+    返回 JSON:
+    {
+      "improved_program": "改进后的完整 .prose 源代码",
+      "changes_made": [
+        {
+          "opportunity_index": N,
+          "description": "更改了什么",
+          "lines_affected": "更改前后的行数摘要"
+        }
+      ],
+      "branch_name": "program/{program_name}-improvements"
+    }
+  """
+  context: { source_info, selected, analysis }
+
+# ============================================================
+# 阶段 5: 创建 PR 或改进建议文件
+# ============================================================
+
+if **source_info.can_pr 为 true (真)**:
+  let pr = session: pr_author
+    prompt: """
+      为此程序改进创建一个拉取请求 (PR)。
+
+      源代码路径: {source_info.source_path}
+      源代码仓库: {source_info.source_repo}
+      分支: {implementation.branch_name}
+      更改内容: {implementation.changes_made}
+      改进后的程序: {implementation.improved_program}
+
+      步骤：
+      1. cd 进入包含源代码的仓库
+      2. 创建分支
+      3. 将改进后的程序写入源代码路径
+      4. 提交并附带清晰的提交消息
+      5. 推送并创建 PR
+
+      PR 的正文应解释每项改进。
+
+      返回: { pr_url, branch, title }
+    """
+    context: { source_info, implementation }
+    permissions:
+      bash: allow
+      write: ["**/*.prose"]
+
+  output result = {
+    status: "pr-created",
+    source_info: source_info,
+    analysis: analysis,
+    implementation: implementation,
+    pr: pr
+  }
+
+else:
+  # 由于无法直接创建 PR，编写改进建议文件
+  let proposal_path = session: pr_author
+    prompt: """
+      为此改进编写一份建议文件。
+
+      由于无法直接创建 PR，请将建议写入：
+      .prose/proposals/{source_info.program_name}-improvements.md
+
+      包含：
+      # 改进建议: {source_info.program_name}
+
+      ## 原始源码
+      {source_info.source_path 或 source_info.registry_ref}
+
+      ## 拟定更改
+      {implementation.changes_made}
+
+      ## 改进后的程序
+      ```prose
+      {implementation.improved_program}
+      ```
+
+      ## 如何应用
+      手动应用或提交给上游的说明。
+
+      返回: { proposal_path }
+    """
+    context: { source_info, implementation }
+    permissions:
+      write: [".prose/proposals/*.md"]
+
+  output result = {
+    status: "proposal-written",
+    source_info: source_info,
+    analysis: analysis,
+    implementation: implementation,
+    proposal: proposal_path
+  }

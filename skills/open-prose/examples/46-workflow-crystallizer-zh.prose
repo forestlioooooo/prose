@@ -1,0 +1,226 @@
+# 工作流结晶器 v2 (Workflow Crystallizer v2)
+# 观察对话线程，提取工作流模式，并将其“结晶”为 .prose 程序。
+#
+# 关键设计决策：
+# - 作者 (Author) 从 GitHub 获取最新的 prose.md 规范及模式/反模式。
+# - 采用单一的自验证作者会话（合并了设计、编写和监制角色）。
+# - 采用单一的用户检查点（合并了范围界定和位置确认）。
+# - 范围界定者 (Scoper) 使用 Sonnet 模型（擅长分析工作，而非创作）。
+# - 并行处理：观察 + 研究、冲突检查 + 范围选项。
+#
+# [备注]：OpenProse 关键字（如 session, agent, parallel, let, loop until, const 等）保持不变。
+
+input thread: "要分析的对话线程"
+input hint: "可选：要重点关注的方面"
+
+# 始终从事实来源获取最新的指导文档
+const PROSE_SPEC_URL = "https://raw.githubusercontent.com/openprose/prose/refs/heads/main/skills/open-prose/prose.md"
+const PATTERNS_URL = "https://raw.githubusercontent.com/openprose/prose/refs/heads/main/skills/open-prose/guidance/patterns.md"
+const ANTIPATTERNS_URL = "https://raw.githubusercontent.com/openprose/prose/refs/heads/main/skills/open-prose/guidance/antipatterns.md"
+
+agent observer:
+  model: opus
+  prompt: """
+    识别对话线程中隐含的工作流。
+    查找：重复模式、多步骤流程、决策点、并行化机会、已执行的验证。
+    要具体——引用线程中的实际操作。
+  """
+
+agent researcher:
+  model: sonnet
+  prompt: "彻底研究代码库。报告已存在的内容以及所使用的模式。"
+  permissions:
+    read: ["**/*.prose", "**/*.md"]
+
+agent scoper:
+  model: sonnet
+  prompt: """
+    确定工作流合适的抽象级别。
+    太具体 = 仅适用于一种情况。
+    太泛化 = 丢失本质，变得模糊。
+    寻找平衡点：捕捉模式，参数化变量。
+  """
+
+agent author:
+  model: opus
+  prompt: """
+    编写地道的 OpenProse 代码。遵循现有的示例模式。
+    宁可显式，不要过度巧妙。为不同的角色使用不同的代理。
+    对独立的任务使用 parallel。对可逆操作使用 try/catch。
+  """
+  permissions:
+    write: ["**/*.prose", "**/*.md"]
+
+agent compiler:
+  model: sonnet
+  prompt: "验证 OpenProse 语法。报告具体的错误及行号。"
+  permissions:
+    bash: allow
+
+# ============================================================
+# 阶段 1：观察与研究 (Observe and Research) - 并行执行
+# ============================================================
+
+parallel:
+  raw_observation = session: observer
+    prompt: """
+      分析此对话线程。识别：
+      1. 执行了什么手动流程？
+      2. 有哪些不同的步骤？
+      3. 做了哪些决策？
+      4. 哪些部分本可以并行化？
+      5. 执行了哪些验证？
+      6. 创建了哪些产出物 (artifacts)？
+      要具体，引用具体的操作。
+    """
+    context: { thread, hint }
+
+  existing_examples = session: researcher
+    prompt: "列出所有 .prose 示例并附带单行摘要"
+    context: "skills/open-prose/examples/"
+
+  existing_ops = session: researcher
+    prompt: "已经存在哪些操作性的 .prose 文件？"
+    context: "OPERATIONS.prose.md"
+
+  patterns_used = session: researcher
+    prompt: "该代码库偏好哪些模式？"
+    context: "skills/open-prose/examples/*.prose"
+
+# ============================================================
+# 阶段 2：范围界定 (Scope) - 先并行分析，后综合
+# ============================================================
+
+parallel:
+  collision_check = session: scoper
+    prompt: """
+      观察到的工作流是否与现有示例重叠？
+      如果是：有何不同？新文件会增加什么独特价值？
+      如果不是：它属于哪个类别？
+    """
+    context: { raw_observation, existing_examples, existing_ops }
+
+  scope_options_raw = session: scoper
+    prompt: """
+      提出 3 种范围界定选项：
+      1. 窄 (NARROW)：精确针对已发生的情况（精确但可能难以推广）
+      2. 中 (MEDIUM)：捕捉带有关键参数的模式（可重用，清晰）
+      3. 宽 (BROAD)：抽象模板（适用范围广但可能丢失细节）
+      对于每种选项：描述输入、代理、关键阶段。
+    """
+    context: { raw_observation, patterns_used }
+
+let scope_options = session: scoper
+  prompt: "结合冲突检查分析，优化范围界定选项"
+  context: { scope_options_raw, collision_check }
+
+let placement_suggestion = session: scoper
+  prompt: """
+    这个文件应该存放在哪里？
+    1. examples/XX-name.prose - 如果是可重用的模式（确定下一个编号）
+    2. 自定义位置 - 如果是项目特定的
+    这是操作性的吗（用于运行本项目）？在 OPERATIONS.prose.md 中记录。
+  """
+  context: { raw_observation, existing_examples, existing_ops }
+
+# ============================================================
+# 阶段 3：用户决策 (单一检查点)
+# ============================================================
+
+input user_decision: """
+  观察到的工作流：
+  {raw_observation}
+
+  冲突检查结果：
+  {collision_check}
+
+  范围界定选项：
+  {scope_options}
+
+  存放位置建议：
+  {placement_suggestion}
+
+  你的决策：
+  1. 选择哪个范围？(1/2/3 或描述自定义范围)
+  2. 确认存放位置或指定不同路径：
+"""
+
+let final_decisions = session: scoper
+  prompt: "将用户的范围选择和位置确认解析为结构化形式"
+  context: { scope_options, placement_suggestion, user_decision }
+
+# ============================================================
+# 阶段 4：带有自验证的编写
+# ============================================================
+
+let draft = session: author
+  prompt: """
+    设计并编写完整的 .prose 文件。
+
+    重要：首先获取并阅读指导文档：
+    - prose.md 规范：{PROSE_SPEC_URL}
+    - patterns.md 模式：{PATTERNS_URL}
+    - antipatterns.md 反模式：{ANTIPATTERNS_URL}
+
+    然后：
+    1. 设计 (DESIGN)：规划输入、代理、阶段、并行性、错误处理。
+    2. 编写 (WRITE)：遵循规范和模式编写完整的 .prose 文件。
+    3. 自审 (SELF-REVIEW)：根据反模式进行检查并删除冗余内容：
+       - 删除仅运行单个命令的 session。
+       - 删除不增加价值的过度抽象的代理。
+       - 删除重复说明代码功能的注释。
+       - 删除不必要的变量和单项并行块。
+       - 保留：清晰的代理角色、有意义的并行性、真正的错误处理。
+
+    包含解释其功能的头部注释。
+    仅输出最终、干净的版本。
+  """
+  context: { final_decisions, existing_examples }
+  permissions:
+    network: [PROSE_SPEC_URL, PATTERNS_URL, ANTIPATTERNS_URL]
+
+# ============================================================
+# 阶段 5：带有次数限制的编译重试
+# ============================================================
+
+let current = draft
+loop until **编译成功 (compilation succeeds)** (max: 3):
+  let result = session: compiler
+    prompt: """根据规范验证此 .prose 文件。
+    从以下地址获取规范：{PROSE_SPEC_URL}
+    报告 SUCCESS (成功) 或带有行号的具体错误。"""
+    context: current
+    permissions:
+      network: [PROSE_SPEC_URL]
+
+  if **编译存在错误 (compilation has errors)**:
+    current = session: author
+      prompt: "修复这些语法错误，返回修正后的版本"
+      context: { current, result }
+      permissions:
+        network: [PROSE_SPEC_URL]
+
+# ============================================================
+# 阶段 6：写入所有文件
+# ============================================================
+
+let written = session: author
+  prompt: """
+    写入 .prose 文件并更新索引：
+    1. 将 .prose 写入确认的位置。
+    2. 如果这是示例，在 examples/README.md 中添加条目。
+    3. 如果这是操作性的，在 OPERATIONS.prose.md 中添加条目。
+
+    返回：{ file_path, readme_updated: bool, ops_updated: bool }
+  """
+  context: { current, final_decisions, existing_examples, existing_ops }
+
+# ============================================================
+# 输出结果
+# ============================================================
+
+output crystallized = {
+  observation: raw_observation,
+  decisions: final_decisions,
+  file: written
+}

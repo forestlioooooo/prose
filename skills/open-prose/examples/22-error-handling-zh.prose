@@ -1,0 +1,57 @@
+# 错误处理示例
+# 演示用于弹性工作流的 try/catch/finally 模式
+
+# 用于错误恢复的基础 try/catch
+# 备注：try 块包含可能失败的代码，catch 块处理失败情况
+try:
+  session "尝试从外部 API 获取数据"
+catch:
+  session "API 失败 - 改用缓存数据"
+
+# 使用错误变量进行上下文感知处理
+# 备注：catch as err 捕获错误对象，可以通过 context 传递给后续会话
+try:
+  session "解析和验证复杂的配置文件"
+catch as err:
+  session "处理配置错误"
+    context: err
+
+# 用于资源清理的 Try/catch/finally
+# 备注：finally 块无论是否发生错误都会执行，适合清理资源
+try:
+  session "打开数据库连接并执行查询"
+catch:
+  session "记录数据库错误并通知管理员"
+finally:
+  session "确保数据库连接正确关闭"
+
+# 嵌套错误处理
+# 备注：内部 try/catch 可以捕获和处理特定错误，然后通过 throw 重新抛出
+try:
+  session "开始外部事务"
+  try:
+    session "执行有风险的内部操作"
+  catch:
+    session "恢复内部操作"
+    throw  # 重新抛出到外部处理程序
+catch:
+  session "在外部级别处理重新抛出的错误"
+
+# 并行块中的错误处理
+# 备注：每个并行分支可以有独立的错误处理，互不影响
+parallel:
+  try:
+    session "服务 A - 可能失败"
+  catch:
+    session "服务 A 的备选方案"
+  try:
+    session "服务 B - 可能失败"
+  catch:
+    session "服务 B 的备选方案"
+
+session "继续使用我们获得的任何结果"
+
+# 抛出自定义错误
+# 备注：throw 语句允许主动引发错误，传递自定义错误消息
+session "验证输入数据"
+throw "验证失败：缺少必需字段"

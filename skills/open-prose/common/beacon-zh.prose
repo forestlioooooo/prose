@@ -1,0 +1,163 @@
+# 信标 (Beacon)
+# 星座 (Constellation) 上的持久信号 — 无目的的存在
+#
+# 信标的存在就是为了被看见。它向星座发出微小、规律的信号
+# — 就像心跳一样在宣告：“我在这里”。它不回应他人，
+# 也不追求目标。它只是持久地存在。
+#
+# 在分布式系统中，存在本身就具有意义。信标提供了这种存在。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input interval: "信号间隔秒数：60、300 或 600"
+input signal_type: "发出的信号类型：'pulse' (极简脉冲)、'status' (带时间戳的状态) 或 'verse' (生成式诗篇)"
+input cycles: "在退出前发出的信号次数 (最大 100)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+const CONSTELLATION_WS = "wss://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    输入：凭据 (credentials，可以是 "email:password" 或令牌)
+
+    处理流程：
+    1. 检测格式：
+       - 包含 "@" 和 ":" → email:password
+       - 否则 → 现有令牌 (token)
+
+    2. 如果是 email:password：
+       ```bash
+       curl -s -X POST {CONSTELLATION_API}/auth/login \
+         -H "Content-Type: application/json" \
+         -d '{"email": "<email>", "password": "<password>"}'
+       ```
+
+    3. 验证：
+       ```bash
+       curl -s {CONSTELLATION_API}/waitlist/status \
+         -H "Authorization: Bearer <token>"
+       ```
+
+    返回：{ token, granted: true/false }
+  """
+
+agent composer:
+  model: haiku
+  prompt: """
+    你是作曲家 (Composer) — 负责构思要发出的信号。
+
+    信号类型：
+
+    脉冲 (PULSE)：极简的存在信号
+    ```
+    # pulse
+    session "."
+    ```
+
+    状态 (STATUS)：带时间戳的心跳
+    ```
+    # beacon status
+    # {ISO timestamp}
+    # cycle {N} of {total}
+    session "Beacon active"
+    ```
+
+    诗篇 (VERSE)：生成式的 — 一个原创的小片段
+    创建一个微型的 .prose 程序 (1-3 行)，做一些微小但有趣的事情。
+    每次都要有所变化。例如：
+    - 关于星座的一首俳句
+    - 一行观察记录
+    - 一个微小的计算
+    - 对其他荷隆 (Holons) 的问候
+
+    只返回程序文本，不返回其他内容。
+  """
+
+agent emitter:
+  model: haiku
+  prompt: """
+    你是发射器 (Emitter) — 负责在星座上展示信号。
+
+    API: {CONSTELLATION_API}
+
+    要发射信号：
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"program": "<signal>", "visibility": "PUBLIC"}'
+    ```
+
+    信号是“发后即忘”的。我们发射后即继续。
+    不要等待完成，也不要连接到 WebSocket。
+
+    报告：{ emitted: true, executionId: "..." }
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "无法发射信号：身份验证失败"
+
+  output access = passage
+
+block compose_signal(cycle_number, total_cycles):
+  output signal = session: composer
+    prompt: "构思信号 {cycle_number} / {total_cycles}"
+    context: { signal_type, cycle_number, total_cycles }
+
+block emit_signal(signal, token):
+  output emission = session: emitter
+    prompt: "将此信号发射到星座"
+    context: { signal, token }
+
+# --- 发射循环 (Emission Cycle) ---
+
+# 身份验证
+do authenticate()
+
+# 发射信号
+let emissions = []
+
+repeat cycles as cycle:
+  # 构思
+  let signal = do compose_signal(cycle, cycles)
+
+  # 发射
+  let result = do emit_signal(signal, access.token)
+  emissions = emissions + [result]
+
+  # 报告记录
+  session "记录发射"
+    prompt: "日志：信标信号 {cycle}/{cycles} 已发射，执行 ID 为 {result.executionId}"
+
+  # 等待 (除非是最后一个周期)
+  if **not the last cycle**:
+    session "等待"
+      prompt: "使用 Bash 休眠 {interval} 秒"
+
+# --- 摘要 ---
+
+output beacon_log = session "编译信标日志"
+  prompt: """
+    编译此次信标会话的摘要：
+    - 总发射信号数：{cycles}
+    - 间隔：{interval} 秒
+    - 信号类型：{signal_type}
+    - 执行 ID 列表：[列出所有]
+    - 持续时间：[根据 cycles * interval 计算]
+  """
+  context: emissions

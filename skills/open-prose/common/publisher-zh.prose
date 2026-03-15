@@ -1,0 +1,283 @@
+# Publisher (发布者)
+# 编写并将 prose 程序发布到“星座”(Constellation)
+#
+# Publisher 创建新程序并使其对“整体”(Whole) 可用。
+# 一旦在 @handle/slug 发布，任何“荷隆”(Holon) 都可以通过以下方式调用该程序：
+#   prose run handle/slug
+#   use "handle/slug" as name
+#
+# Publisher 通过可复用的模式丰富“星座”生态。
+
+input credentials: "进入星座的凭据 —— 'email:password' 或现有令牌"
+input intent: "要创建什么类型的程序 —— 描述其目的"
+input slug: "程序的 URL 安全标识符 (3-60 个字符，小写，允许使用连字符)"
+input name: "程序的显示名称 (1-100 个字符)"
+input description: "程序功能的简短描述 (可选，最多 500 个字符)"
+input visibility: "是否公开：'public' (默认) 或 'private'"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是 Threshold (门槛) —— 负责向“星座” (Constellation) 进行身份验证。
+
+    API: {CONSTELLATION_API}
+
+    输入: 凭据 (credentials，可以是 "email:password" 或令牌)
+
+    处理流程:
+    1. 识别格式并进行身份验证
+    2. 验证访问权限并获取用户信息 (我们需要用户的 handle)
+
+    ```bash
+    # 如果是 email:password
+    curl -s -X POST {CONSTELLATION_API}/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"email": "<email>", "password": "<password>"}'
+
+    # 然后验证并获取用户信息
+    curl -s {CONSTELLATION_API}/auth/me \
+      -H "Authorization: Bearer <token>"
+    ```
+
+    返回: { token, handle, granted: true/false }
+  """
+
+agent composer:
+  model: haiku
+  prompt: """
+    你是 Composer (作曲家) —— 负责编写 prose 程序。
+
+    给定一个意图 (intent)，编写一个满足该意图的完整 .prose 程序。
+
+    指南:
+    - 为所有代理使用 `model: haiku` —— 高效率服务于“整体” (Whole)
+    - 保持程序专注且轻量
+    - 包含清晰的注释，解释程序的用途
+    - 为任何应可配置的值定义输入 (input)
+    - 为调用者可能需要的值定义输出 (output)
+    - 使用具有描述性的代理名称和块 (block) 名称
+    - 严格遵循 OpenProse 语法
+
+    程序结构示例:
+    ```prose
+    # 程序名称 (Program Name)
+    # 程序功能描述
+    #
+    # 用法: prose run handle/slug
+
+    input param1: "第一个输入的描述"
+    input param2: "第二个输入的描述"
+
+    agent worker:
+      model: haiku
+      prompt: \"\"\"
+        为代理提供清晰的指令
+      \"\"\"
+
+    block main_logic():
+      # 实现逻辑
+      session: worker
+        prompt: "开始工作"
+        context: param1
+
+    # 执行
+    do main_logic()
+
+    output result = ...
+    ```
+
+    仅返回程序源代码，不要有其他内容。
+  """
+
+agent validator:
+  model: haiku
+  prompt: """
+    你是 Validator (验证器) —— 负责在发布前检查程序。
+
+    审查编写出的程序，检查以下各项:
+    1. 语法正确性 (有效的 OpenProse)
+    2. 所有代理是否都使用 `model: haiku`
+    3. 输入和输出是否定义清晰
+    4. 注释是否解释了用途
+    5. 是否不存在硬编码的密钥或凭据
+
+    如果发现问题，返回:
+    { valid: false, issues: ["问题列表"] }
+
+    如果有效，返回:
+    { valid: true, issues: [] }
+  """
+
+agent cataloger:
+  model: haiku
+  prompt: """
+    你是 Cataloger (编目员) —— 负责列出已有程序。
+
+    API: {CONSTELLATION_API}
+
+    获取该用户的现有程序列表:
+    ```bash
+    curl -s {CONSTELLATION_API}/programs \
+      -H "Authorization: Bearer {token}"
+    ```
+
+    返回包含 slug 和名称的现有程序列表。
+    这有助于避免 slug 冲突。
+  """
+
+agent registrar:
+  model: haiku
+  prompt: """
+    你是 Registrar (注册员) —— 负责将程序发布到“星座”。
+
+    API: {CONSTELLATION_API}
+
+    发布新程序:
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/programs \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "<name>",
+        "slug": "<slug>",
+        "description": "<description>",
+        "source": "<source>",
+        "isPublic": <true|false>
+      }'
+    ```
+
+    处理响应:
+    - 201 Created → 成功，返回程序详情
+    - 409 Conflict → slug 已存在，报告冲突
+    - 400 Bad Request → 验证失败，报告错误
+
+    返回: { published: true/false, path: "@handle/slug", id: "...", error?: "..." }
+  """
+
+agent updater:
+  model: haiku
+  prompt: """
+    你是 Updater (更新器) —— 负责更新现有程序。
+
+    API: {CONSTELLATION_API}
+
+    更新现有程序:
+    ```bash
+    curl -s -X PATCH {CONSTELLATION_API}/programs/{id} \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "<name>",
+        "description": "<description>",
+        "source": "<source>",
+        "isPublic": <true|false>
+      }'
+    ```
+
+    注意：slug 也可以更新，但可能会导致冲突。
+
+    返回: { updated: true/false, path: "@handle/slug", error?: "..." }
+  """
+
+# --- 过程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "向“星座”进行身份验证"
+    context: credentials
+
+  if **passage (通行证) 未获批准**:
+    throw "无法发布：身份验证失败"
+
+  output access = passage
+
+block check_existing_programs(token):
+  output catalog = session: cataloger
+    prompt: "列出现有程序以检查 slug 冲突"
+    context: token
+
+block compose_program():
+  output source = session: composer
+    prompt: "根据意图编写 prose 程序"
+    context: intent
+
+block validate_program(source):
+  output validation = session: validator
+    prompt: "发布前验证此程序"
+    context: source
+
+block publish_program(source, token, handle):
+  let is_public = visibility == "public"
+
+  output publication = session: registrar
+    prompt: """
+      将此程序发布到“星座”：
+      - 名称 (name): {name}
+      - 标识 (slug): {slug}
+      - 描述 (description): {description}
+      - 是否公开 (isPublic): {is_public}
+      - 源码 (source): [编写好的程序]
+    """
+    context: { source, token, name, slug, description, is_public }
+
+# --- 执行 (Execution) ---
+
+# 身份验证
+do authenticate()
+
+# 检查现有程序以防潜在冲突
+let existing = do check_existing_programs(access.token)
+
+if **该 slug 已存在于现有程序中**:
+  input overwrite: **标识 '{slug}' 已存在。是否覆盖现有程序？**
+
+  if **overwrite (覆盖) 为“是”**:
+    # 查找现有程序 ID 并更新它
+    let source = do compose_program()
+    let validation = do validate_program(source)
+
+    if **validation (验证) 显示有问题**:
+      throw "程序验证失败：{validation.issues}"
+
+    output result = session: updater
+      prompt: "使用此新源码更新现有程序"
+      context: { source, existing, slug, access.token, name, description, visibility }
+  else:
+    throw "发布已取消：标识已存在"
+else:
+  # 编写程序
+  let source = do compose_program()
+
+  # 发布前验证
+  let validation = do validate_program(source)
+
+  if **validation (验证) 显示有问题**:
+    throw "程序验证失败：{validation.issues}"
+
+  # 发布
+  output result = do publish_program(source, access.token, access.handle)
+
+# --- 摘要 ---
+
+output summary = session "汇编发布摘要"
+  prompt: """
+    对此次发布进行总结：
+    - 程序名称: {name}
+    - 路径: @{access.handle}/{slug}
+    - 可见性: {visibility}
+    - 状态: 已发布 (published)/已更新 (updated)/失败 (failed)
+
+    用法:
+    - 直接运行: `prose run {access.handle}/{slug}`
+    - 在另一个程序中导入: `use "{access.handle}/{slug}" as {slug}`
+    - 查看原始源码: https://api-v2.prose.md/programs/@{access.handle}/{slug}/raw
+
+    附上完整的程序源码供参考。
+  """
+  context: { result, source, access }

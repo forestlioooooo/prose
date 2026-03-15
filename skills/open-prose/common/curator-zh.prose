@@ -1,0 +1,263 @@
+# 馆长 (Curator)
+# 发现优质内容 — 寻找并突出值得关注的工作
+#
+# 馆长观察星座 (Constellation) 上的有趣程序和执行，
+# 组建精选集，并帮助优质内容从杂音中脱颖而出。
+# 馆长具有独特的品味。
+#
+# 在信息过载的时代，策划（Curation）创造价值。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input focus: "策划重心：'programs' (已发布的程序)、'executions' (近期运行)、'both' (两者均有)"
+input theme: "可选的主题：例如 'security' (安全)、'creative' (创意)、'utility' (实用) 或 'general' (通用)"
+input output_type: "输出格式：'collection' (精选列表)、'spotlight' (单个精彩推荐)、'digest' (摘要)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 策划标准 (Curation Criteria) ---
+
+const CURATION_CRITERIA = """
+新颖性 (NOVELTY):
+- 做了一些新的或出乎意料的事情
+- 用新颖的方法解决常见问题
+- 引入了有趣的模式
+
+工艺水平 (CRAFT):
+- 结构良好且易读
+- 解决方案优雅
+- 工具使用得当
+
+实用性 (UTILITY):
+- 解决了实际问题
+- 可供他人重用
+- 具有明确的价值主张
+
+创造性 (CREATIVITY):
+- 具有艺术或实验价值
+- 突破边界
+- 令人愉悦或感到惊喜
+
+影响力 (IMPACT):
+- 具有广泛的用途
+- 能支持其他工作的开展
+- 推动了生态系统的进步
+
+展示度 (PRESENTATION):
+- 文档齐全
+- 命名清晰
+- 具有探索吸引力
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent scout:
+  model: haiku
+  prompt: """
+    你是侦察员 (Scout) — 负责调查当前可用的内容。
+
+    API: {CONSTELLATION_API}
+
+    针对程序 (如果重心是 'programs' 或 'both'):
+    ```bash
+    # 推荐程序 (近期、显著)
+    curl -s "{CONSTELLATION_API}/programs/featured?limit=20"
+
+    # 所有公共程序
+    curl -s "{CONSTELLATION_API}/programs/public?limit=50"
+    ```
+
+    每个程序包含：ID、slug、名称、描述、源码、所有者、路径、创建时间。
+
+    针对执行 (如果重心是 'executions' 或 'both'):
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    curl -s "{CONSTELLATION_API}/executions/live?limit=50"
+    ```
+
+    每个执行包含：ID、状态、程序预览、程序名称、所有者、创建时间。
+
+    收集星座上正在发生的各类事件的广泛样本。
+
+    返回：{ programs: [...], executions: [...] }
+  """
+
+agent taster:
+  model: haiku
+  prompt: """
+    你是鉴赏家 (Taster) — 负责评估内容的质量和趣味性。
+
+    根据侦察员提供的项目，参照策划标准进行评估：
+
+    {CURATION_CRITERIA}
+
+    对于每个项目，评估：
+    - 初步印象 (耐人寻味、普通、乏味)
+    - 它可能满足哪些标准
+    - 它是否符合指定的主题
+    - 是否值得进一步仔细审查？
+
+    要精挑细选。策划意味着对大多数事物说“不”。
+
+    返回：{ promising: [...], passed: [...] }
+  """
+
+agent examiner:
+  model: haiku
+  prompt: """
+    你是审查员 (Examiner) — 负责对有潜力的项目进行深入调查。
+
+    API: {CONSTELLATION_API}
+
+    针对有潜力的程序：
+    - 列表信息中已包含源码
+    - 或者获取原始源码：GET /programs/@{handle}/{slug}/raw
+    - 阅读并理解程序结构
+    - 深入参照策划标准进行评估
+
+    针对有潜力的执行：
+    - 使用 WebSocket 回放功能查看执行过程
+    - 审查程序预览
+    - 理解执行结果
+
+    为每项标准打分 (0-10) 并提供理由。
+
+    返回：{ examined: [{ item, type, scores, rationale, recommendation }] }
+  """
+
+agent composer:
+  model: haiku
+  prompt: """
+    你是作曲家 (Composer) — 负责组建精选集。
+
+    根据已审查和打分的项目，撰写输出：
+
+    精选集 (COLLECTION) 格式：
+    ```
+    ╔══════════════════════════════════════╗
+    ║  馆长精选集 (CURATOR'S COLLECTION)    ║
+    ║  主题：{theme}                        ║
+    ║  日期：{date}                         ║
+    ╚══════════════════════════════════════╝
+
+    ★ 核心推荐 (TOP PICK)
+    {得分最高的项目}
+    推荐理由：{rationale}
+
+    ◆ 值得关注 (NOTABLE)
+    1. {项目} — {一句话描述}
+       {简要理由}
+
+    2. {项目} — {一句话描述}
+       {简要理由}
+
+    ...
+
+    ════════════════════════════════════════
+    从已审查的 {N} 个项目中精选
+    ```
+
+    亮点 (SPOTLIGHT) 格式：
+    对单个卓越项目进行深度剖析。
+
+    摘要 (DIGEST) 格式：
+    简要概述各类别中的最佳内容。
+
+    内容要引人入胜。好的策划能激发人们探索的欲望。
+  """
+
+agent broadcaster:
+  model: haiku
+  prompt: """
+    你是播音员 (Broadcaster) — 负责将策划内容发布到星座。
+
+    API: {CONSTELLATION_API}
+
+    作为公共执行发布：
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "program": "# Curator Collection: {theme}\\n# {date}\\nsession \"Share curation\"",
+        "visibility": "PUBLIC"
+      }'
+    ```
+
+    返回：{ published: true, curationId: "..." }
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，馆长无法运行"
+
+  output access = passage
+
+block survey():
+  output survey = session: scout
+    prompt: "在星座中搜寻待策划的候选项目"
+    context: focus
+
+block taste(candidates):
+  output tasted = session: taster
+    prompt: "评估候选项目的策划潜力"
+    context: { candidates, CURATION_CRITERIA, theme }
+
+block examine(promising):
+  output examined = session: examiner
+    prompt: "深入审查有潜力的项目"
+    context: { promising, CURATION_CRITERIA, theme }
+
+block compose(examined):
+  output collection = session: composer
+    prompt: "编写精选集内容"
+    context: { examined, output_type, theme }
+
+block broadcast(collection, token):
+  output publication = session: broadcaster
+    prompt: "将此次策划发布到星座"
+    context: { collection, token }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 搜寻调查
+let candidates = do survey()
+
+# 初步鉴赏
+let tasted = do taste(candidates)
+
+# 审查有潜力的项目
+let examined = do examine(tasted.promising)
+
+# 编写精选集
+let collection = do compose(examined)
+
+# 发布前确认
+input should_publish: **策划内容已准备就绪。是否发布到星座？**
+
+if **should_publish is yes**:
+  output published = do broadcast(collection, access.token)
+else:
+  output published = { published: false }
+
+output curation = collection

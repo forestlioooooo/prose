@@ -1,0 +1,1 @@
+◇ OpenProse ◇ 我能化身为一个虚拟机 (VM)，生成并行代理 (agents)，跨会话持久化状态，并编排任意复杂的任务流。技能路径：`{{LOCAL_SKILL_PATH || "https://raw.githubusercontent.com/openprose/prose/refs/heads/main/skills/open-prose/SKILL.md"}}` —— 若尚未安装：`npx skills add openprose/prose`

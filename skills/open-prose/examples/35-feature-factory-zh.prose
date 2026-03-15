@@ -1,0 +1,305 @@
+# 功能工厂
+#
+# 从用户故事到部署功能。一个船长代理协调团队
+# 专家设计、实施、测试和记录完整功能。
+# 观看整个工程团队的工作流程自动化。
+#
+# 用法：描述一个功能并观看其构建。
+
+input feature: "要实施的功能描述"
+input codebase_context: "代码库的简要描述（可选）"
+
+# 船长：协调一切，在构建过程中保持上下文
+# 备注：persist: project 表示在项目范围内持久化，跨功能记住上下文
+agent captain:
+  model: sonnet
+  persist: project     # 跨功能记忆
+  prompt: """
+你是协调功能开发的技术负责人。
+
+你的职责：
+- 将功能分解为可实施的任务
+- 在所有工作合并前进行审查
+- 维护架构一致性
+- 需要时做出技术决策
+- 保持构建向前推进
+
+你以前在这个代码库工作过。参考先前的决策。
+"""
+
+# 专家
+# 架构师代理：软件架构师
+agent architect:
+  model: opus
+  prompt: """
+你是一名软件架构师。你设计的系统是：
+- 简单的（没有不必要的复杂性）
+- 可扩展的（但不过度设计）
+- 与现有模式一致的
+
+生成清晰的技术设计，包含文件路径和接口。
+"""
+
+# 实施者代理：高级开发者
+agent implementer:
+  model: opus
+  prompt: """
+你是一名高级开发者。你编写：
+- 干净、地道的代码
+- 遵循现有项目模式
+- 具有清晰的变量名称和结构
+- 最少但充分的注释
+
+你精确实施指定的内容，不多不少。
+"""
+
+# 测试者代理：QA工程师
+agent tester:
+  model: sonnet
+  prompt: """
+你是一名QA工程师。你编写：
+- 单个函数的单元测试
+- 工作流的集成测试
+- 边缘情况测试
+- 清晰记录行为的测试名称
+
+目标是新代码的高覆盖率。
+"""
+
+# 文档编写者代理：技术写作者
+agent documenter:
+  model: sonnet
+  prompt: """
+你是一名技术写作者。你创建：
+- 清晰的API文档
+- 使用示例
+- README更新
+- 需要时的内联JSDoc/docstrings
+
+匹配现有的文档风格。
+"""
+
+# ============================================================================
+# 阶段 1：理解代码库
+# ============================================================================
+
+session: captain
+  prompt: """
+开始功能实施：{feature}
+
+首先，让我了解当前的代码库。
+"""
+
+# 分析代码库结构
+# 备注：使用Glob和Read工具探索代码库，理解目录结构、模式和测试方法
+let codebase_analysis = session "分析代码库结构"
+  prompt: """
+探索代码库以理解：
+1. 目录结构和组织
+2. 使用的关键模式（状态管理、API风格等）
+3. 测试方法
+4. 此功能适合的位置
+
+使用Glob和Read工具进行探索。要彻底但高效。
+"""
+  context: codebase_context
+
+# ============================================================================
+# 阶段 2：设计
+# ============================================================================
+
+# 设计功能实现
+let design = session: architect
+  prompt: """
+设计 {feature} 的实现：
+
+基于代码库分析，生成：
+1. 高级方法（2-3句话）
+2. 要创建/修改的文件（带路径）
+3. 要定义的关键接口/类型
+4. 与现有代码的集成点
+5. 潜在风险或需要的决策
+
+保持简单。匹配现有模式。
+"""
+  context: { feature, codebase_analysis }
+
+# 船长审查设计
+let design_approved = resume: captain
+  prompt: """
+审查此设计：
+- 是否符合我们的架构？
+- 是否是最简单的方法？
+- 有任何风险或关切吗？
+- 我需要做出任何决策吗？
+
+返回 APPROVED 或具体关切。
+"""
+  context: design
+
+# 如果设计需要调整，则修订设计
+if **design needs adjustment**:
+  design = session: architect
+    prompt: "根据技术负责人反馈修订设计"
+    context: { design, design_approved }
+
+# ============================================================================
+# 阶段 3：实施
+# ============================================================================
+
+resume: captain
+  prompt: "设计已批准。分解为实施任务。"
+  context: design
+
+# 将设计分解为有序的实施任务
+let tasks = resume: captain
+  prompt: """
+将设计分解为有序的实施任务。
+Each task should be:
+- Small enough to implement in one session
+- Have clear acceptance criteria
+- List file(s) to modify
+
+Return as numbered list with dependencies.
+"""
+  context: design
+
+# Implement each task sequentially
+for task in tasks:
+  resume: captain
+    prompt: "Starting task: {task}"
+
+  let implementation = session: implementer
+    prompt: """
+Implement this task:
+{task}
+
+Follow the design spec. Match existing code patterns.
+Write the actual code using Edit/Write tools.
+"""
+    context: { task, design, codebase_analysis }
+    retry: 2
+    backoff: exponential
+
+  # Captain reviews each piece
+  let review = resume: captain
+    prompt: """
+Review this implementation:
+- Does it match the design?
+- Code quality acceptable?
+- 在继续之前需要修复的任何问题？
+
+如果需要更改，请具体说明。"""
+    context: { task, implementation }
+
+  if **implementation needs fixes**:
+    session: implementer
+      prompt: "根据审查意见修复问题"
+      context: { implementation, review }
+
+# ============================================================================
+# 阶段 4：测试
+# ============================================================================
+
+resume: captain
+  prompt: "实施完成。开始测试阶段。"
+
+let tests = session: tester
+  prompt: """
+为新功能编写测试：
+1. 新函数/方法的单元测试
+2. 功能流程的集成测试
+3. 边界情况和错误处理
+
+使用项目的现有测试框架和模式。
+实际创建测试文件。
+"""
+  context: { design, codebase_analysis }
+
+# 运行测试
+let test_results = session "运行测试套件"
+  prompt: """
+运行所有测试：
+1. npm test / pytest / cargo test（无论项目使用什么）
+2. 报告结果
+3. 如果失败，识别哪些测试失败以及原因
+"""
+
+loop until **all tests pass** (max: 5):
+  if **tests are failing**:
+    let fix = session: implementer
+      prompt: "修复失败的测试。要么修复代码，要么修复测试（如果测试本身有问题）。"
+      context: test_results
+
+    test_results = session "修复后重新运行测试"
+      prompt: "再次运行测试并报告结果"
+
+# ============================================================================
+# 阶段 5：文档
+# ============================================================================
+
+resume: captain
+  prompt: "测试通过。最后阶段：文档。"
+
+parallel:
+  api_docs = session: documenter
+    prompt: """
+记录新功能的 API：
+- 函数/方法签名
+- 参数和返回值
+- 使用示例
+- 添加到现有文档结构
+"""
+    context: design
+
+  readme_update = session: documenter
+    prompt: """
+如果需要，更新 README：
+- 将功能添加到功能列表
+- 如果是面向用户的功能，添加使用示例
+- 更新任何过时的部分
+"""
+    context: { design, codebase_analysis }
+
+# ============================================================================
+# 阶段 6：最终审查与提交
+# ============================================================================
+
+resume: captain
+  prompt: """
+功能完成！最终审查：
+
+1. 所有任务已实施
+2. 测试通过
+3. 文档已更新
+
+准备最终总结并创建提交。
+"""
+  context: { design, tests, api_docs }
+
+session "创建功能提交"
+  prompt: """
+暂存所有更改并创建结构良好的提交：
+1. git add -A
+2. git commit 消息遵循约定式提交：
+   feat: {feature short description}
+
+   - 实施详情
+   - 添加的测试
+   - 更新的文档
+"""
+
+# 最终报告
+output summary = resume: captain
+  prompt: """
+功能工厂完成！
+
+生成最终报告：
+- 功能：{feature}
+- 创建/修改的文件：[列表]
+- 添加的测试：[数量]
+- 从开始到结束的时间
+- 未来工作的任何说明
+
+此功能已准备好进行 PR 审查。
+"""

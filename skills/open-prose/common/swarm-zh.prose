@@ -1,0 +1,191 @@
+# Swarm (蜂群)
+# 扇出式表现 (Fan-out manifestation) —— 从同一个意图派生出许多“荷隆”(Holon)
+#
+# Swarm 同时表现多个“荷隆”，每个都是针对同一主题的变体。
+# 它通过并行执行来探索可能性的空间，观察不同程序在相同条件下
+# 是如何展开的。
+#
+# 如果说“荷隆”是单数，那么“蜂群”就是复数。
+
+input credentials: "进入星座的凭据 —— 'email:password' 或现有令牌"
+input theme: "蜂群中各个变体的核心想法或提示词"
+input swarm_size: "要表现多少个“荷隆”：3, 5, 或 10"
+input variation_style: "变体方式：'parameter' (相同结构，不同输入), 'perspective' (相同目标，不同方法), 或 'mutation' (随机变异)"
+input observe_completion: "是否等待并观察所有“荷隆”：true (是) 或 false (否)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+const CONSTELLATION_WS = "wss://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是 Threshold (门槛) —— 负责向“星座” (Constellation) 进行身份验证。
+
+    API: {CONSTELLATION_API}
+
+    输入: 凭据 (credentials，可以是 "email:password" 或令牌)
+
+    处理流程:
+    1. 识别格式并进行身份验证
+    2. 验证访问权限
+
+    返回: { token, granted: true/false }
+  """
+
+agent variator:
+  model: haiku
+  prompt: """
+    你是 Variator (变分器) —— 负责针对一个主题生成变体。
+
+    给定主题和变体方式，生成 {swarm_size} 个不同的程序。
+
+    变体方式 (Variation styles):
+
+    参数化 (PARAMETER): 相同的程序结构，不同的输入
+    - 如果主题是 "研究 {topic}"，生成不同主题的程序
+    - 如果主题是 "分析 {file}"，生成针对不同目标的程序
+    - 保持结构完全一致，仅改变参数
+
+    视角 (PERSPECTIVE): 相同的目标，不同的方法
+    - 生成追求相同结果的程序
+    - 但采用不同的策略、工具或框架
+    - 示例："解释 X" → 一个使用类比，一个使用例子，一个使用正式定义
+
+    变异 (MUTATION): 随机的创造性变异
+    - 以主题为灵感
+    - 生成相关但不可预测的变体
+    - 允许“蜂群”探索未预料到的方向
+
+    返回包含 {swarm_size} 个完整 .prose 程序的列表，每个程序为一个字符串。
+    格式：JSON 字符串数组。
+  """
+
+agent launcher:
+  model: haiku
+  prompt: """
+    你是 Launcher (发射器) —— 负责在“星座”上表现“荷隆”。
+
+    API: {CONSTELLATION_API}
+
+    对于批处理中的每个程序，执行:
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"program": "<program>", "visibility": "PUBLIC"}'
+    ```
+
+    启动所有程序。收集所有执行标识 (executionIds)。
+
+    返回: { launched: N, executions: [{ id, program_preview }] }
+  """
+
+agent observer:
+  model: haiku
+  prompt: """
+    你是 Observer (观察员) —— 负责观察“蜂群”的展开。
+
+    API: {CONSTELLATION_API}
+
+    给定 executionIds 列表，轮询其状态:
+    ```bash
+    curl -s {CONSTELLATION_API}/executions/{id}/public
+    ```
+
+    持续轮询直到所有实例全部结束 (completed/failed/cancelled) 
+    或达到超时时间 (10 分钟)。
+
+    报告内容:
+    - 已完成: [ids]
+    - 已失败: [ids]
+    - 仍在运行: [ids]
+    - 结果摘要
+  """
+
+agent analyst:
+  model: haiku
+  prompt: """
+    你是 Analyst (分析师) —— 负责合成“蜂群”行为。
+
+    给定“蜂群”的结果，分析：
+    - 收敛性 (Convergence): 变体是否产生了类似的结果？
+    - 发散性 (Divergence): 它们在何处产生了分歧？
+    - 惊喜 (Surprises): 是否出现了意想不到的结果？
+    - 模式 (Patterns): “蜂群”揭示了有关该主题的什么信息？
+
+    生成一份合成报告。
+  """
+
+# --- 过程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "向“星座”进行身份验证"
+    context: credentials
+
+  if **passage (通行证) 未获批准**:
+    throw "无法表现蜂群：身份验证失败"
+
+  output access = passage
+
+block generate_variations():
+  output programs = session: variator
+    prompt: "针对主题生成 {swarm_size} 个变体"
+    context: { theme, swarm_size, variation_style }
+
+block launch_swarm(programs, token):
+  output launch_result = session: launcher
+    prompt: "同时启动所有程序"
+    context: { programs, token }
+
+block observe_swarm(executions):
+  output observations = session: observer
+    prompt: "观察蜂群直至结束"
+    context: executions
+
+block analyze_swarm(launch_result, observations):
+  output analysis = session: analyst
+    prompt: "分析蜂群的行为和结果"
+    context: { launch_result, observations, theme, variation_style }
+
+# --- 执行 (Execution) ---
+
+# 身份验证
+do authenticate()
+
+# 生成变体
+let programs = do generate_variations()
+
+# 启动蜂群
+let launch = do launch_swarm(programs, access.token)
+
+# 报告启动情况
+session "报告启动"
+  prompt: """
+    报告：蜂群已启动
+    - 规模: {swarm_size}
+    - 变体方式: {variation_style}
+    - 执行 IDs: [launch 结果中的列表]
+  """
+  context: launch
+
+# 可选地观察完成情况
+if **observe_completion 为 true**:
+  let observations = do observe_swarm(launch.executions)
+  output swarm_analysis = do analyze_swarm(launch, observations)
+else:
+  output swarm_analysis = session "快速总结"
+    prompt: """
+      蜂群已启动但未进行后续观察。
+      - 主题: {theme}
+      - 规模: {swarm_size}
+      - 风格: {variation_style}
+      - 执行 IDs: [列表]
+
+      使用 seeker.prose 或 observatory.prose 跟踪结果。
+    """
+    context: launch

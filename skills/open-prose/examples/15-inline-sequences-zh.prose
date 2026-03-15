@@ -1,0 +1,27 @@
+# 示例 15：内联序列
+# 演示 -> 操作符用于链接会话
+
+# 使用箭头语法的快速管道
+# 备注：-> 操作符允许将多个会话链接成序列，按顺序执行
+session "规划任务" -> session "执行计划" -> session "审查结果"
+
+# 带有上下文捕获的内联序列
+# 备注：链接序列的输出可以捕获到变量中，供后续使用
+let analysis = session "分析数据" -> session "得出结论"
+
+session "撰写报告"
+  context: analysis
+
+# 将内联序列与块结合
+# 备注：块定义中也可以使用 -> 操作符，创建可重用的序列
+block quick-check:
+  session "安全检查" -> session "性能检查"
+
+do quick-check
+
+# 在变量赋值中使用内联序列
+# 备注：整个序列的输出可以作为单个变量捕获，便于管理复杂工作流
+let workflow = session "步骤 1" -> session "步骤 2" -> session "步骤 3"
+
+session "最终步骤"
+  context: workflow

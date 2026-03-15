@@ -1,0 +1,342 @@
+# Prophet (先知)
+# 预测趋势与问题 —— 为“星座”(Constellation) 提供早期预警
+#
+# Prophet 通过分析随时间变化的模式来预测未来趋势。
+# 包括增长趋势、容量限制、新出现的问题、活动转移等。
+# 远见能够让准备更充分。
+#
+# 先知看到的不是未来，而是它逼近的阴影。
+
+input credentials: "进入星座的凭据 —— 'email:password' 或现有令牌"
+input horizon: "预测范围：'near' (数小时/数天), 'medium' (数周), 'far' (数月)"
+input focus: "预测重点：'activity' (使用模式), 'capacity' (资源限制), 'quality' (生态健康), 'threats' (新兴风险), 'all' (全部)"
+input depth: "分析深度：'quick' (表面趋势), 'thorough' (详细分析)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 预测框架 ---
+
+const PREDICTION_FRAMEWORK = """
+趋势分析 (TREND ANALYSIS):
+- 方向: 增加、减少、稳定、波动
+- 速率: 缓慢、适度、快速、加速
+- 一致性: 稳健、周期性、反复无常
+- 拐点: 趋势发生改变的位置
+
+领先指标 (LEADING INDICATORS):
+活动 (Activity):
+- 新程序发布量 (供应)
+- 执行频率 (需求)
+- 唯一参与者 (社区规模)
+- 失败率 (系统健康度)
+
+容量 (Capacity):
+- 执行队列深度
+- 平均完成时间
+- 资源利用模式
+- 峰值负载与平均负载对比
+
+质量 (Quality):
+- 程序平均质量得分
+- 文档完整性
+- 错误处理覆盖率
+- 模式复用率
+
+威胁 (Threats):
+- 安全事件频率
+- 恶意模式尝试次数
+- 垃圾信息/滥用量
+- 冲突频率
+
+预测方法 (PREDICTION METHODS):
+- 推演 (Extrapolation): 延续当前趋势
+- 模式匹配 (Pattern matching): 寻找类似的历史情况
+- 因果建模 (Causal modeling): 如果 X 继续，那么 Y 将发生
+- 场景分析 (Scenario analysis): 最好、最坏及最可能的案例
+
+置信度 (CONFIDENCE LEVELS):
+- 高 (High): 数据强劲、趋势清晰、范围较短
+- 中 (Medium): 数据良好、存在一些不确定性
+- 低 (Low): 数据有限、范围较长、模式多变
+- 推测 (Speculative): 推理成分多于数据
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是 Threshold (门槛) —— 负责向“星座” (Constellation) 进行身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回: { token, handle, granted: true/false }
+  """
+
+agent historian:
+  model: haiku
+  prompt: """
+    你是 Historian (历史学家) —— 负责收集历史数据。
+
+    API: {CONSTELLATION_API}
+
+    收集近期数据:
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    curl -s "{CONSTELLATION_API}/executions/live?limit=50"
+    ```
+
+    对于每个数据点，请记录:
+    - 时间戳
+    - 类型 (执行实例、程序)
+    - 状态 (成功、失败)
+    - 参与者 (Actor)
+    - 特征
+
+    按时间顺序组织，以便观察随时间变化的模式。
+
+    返回: { data_points: [...], time_range: { start, end }, summary_stats }
+  """
+
+agent analyst:
+  model: haiku
+  prompt: """
+    你是 Analyst (分析师) —— 负责识别历史数据中的趋势。
+
+    使用预测框架:
+    {PREDICTION_FRAMEWORK}
+
+    分析数据中的以下内容:
+
+    1. 活动趋势 (ACTIVITY TRENDS)
+       - 随时间变化的执行量
+       - 参与者参与模式
+       - 程序创建速率
+       - 活动高峰时间
+
+    2. 容量指标 (CAPACITY INDICATORS)
+       - 完成率
+       - 完成时间趋势
+       - 失败模式
+       - 队列行为 (如果可见)
+
+    3. 质量指标 (QUALITY INDICATORS)
+       - 成功与失败的比例
+       - 程序复杂度趋势
+       - 错误模式
+       - 随时间推移的改进情况
+
+    4. 威胁指标 (THREAT INDICATORS)
+       - 异常模式
+       - 可疑活动
+       - 滥用尝试
+       - 冲突信号
+
+    对于识别出的每个趋势，请说明:
+    - 方向和速率
+    - 观察的置信度
+    - 潜在原因
+
+    返回: { trends: [...], anomalies: [...], patterns: [...] }
+  """
+
+agent forecaster:
+  model: haiku
+  prompt: """
+    你是 Forecaster (预报员) —— 负责将趋势推演到未来。
+
+    给定识别出的趋势和预测范围:
+
+    针对“近期” (NEAR) 范围 (数小时/数天):
+    - 高置信度推演
+    - 迫切关注的事项
+    - 短期模式
+
+    针对“中期” (MEDIUM) 范围 (数周):
+    - 中等置信度推算
+    - 新兴模式
+    - 可能出现的拐点
+
+    针对“远期” (FAR) 范围 (数月):
+    - 较低置信度的场景
+    - 结构性变化
+    - 最好/最坏/最可能的案例
+
+    对于每个预测，请说明:
+    - 内容: 具体预测
+    - 时间: 预期发生时间
+    - 置信度: 高/中/低/推测
+    - 依据: 为什么这样预测
+    - 影响: 这意味着什么
+    - 信号: 什么会确认或反驳该预测
+
+    返回: { predictions: [...], scenarios: {...} }
+  """
+
+agent warner:
+  model: haiku
+  prompt: """
+    你是 Warner (预警员) —— 负责识别具体的预警信息。
+
+    从预测中提取可操作的警告:
+
+    紧急 (URGENT，需立即行动):
+    - 迫在眉睫的容量问题
+    - 活动中的安全威胁
+    - 级联故障 (Cascading failures)
+    - 关键质量退化
+
+    关注 (WATCH，密切监视):
+    - 令人担忧的趋势
+    - 潜在问题
+    - 早期预警信号
+    - 不确定但严重的事项
+
+    准备 (PREPARE，提前计划):
+    - 长期挑战
+    - 结构性问题
+    - 机会窗口
+    - 必要的适配调整
+
+    对于每个预警，请说明:
+    - 严重程度: 紧急/关注/准备
+    - 问题点: 核心问题是什么
+    - 时间点: 何时变得至关重要
+    - 行动建议: 应该采取什么措施
+    - 责任方: 谁应该采取行动
+
+    返回: { warnings: [...] }
+  """
+
+agent oracle:
+  model: haiku
+  prompt: """
+    你是 Oracle (神谕者) —— 负责合成预言。
+
+    将分析、预测和预警结合成一个连贯的预言。
+
+    格式:
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  PROPHET 的远见                                          ║
+    ║  范围: {horizon}                                         ║
+    ║  重点: {focus}                                           ║
+    ║  日期: {timestamp}                                       ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    当前状态
+    ─────────────────
+    {当前状况摘要}
+
+    渐近的阴影 (SHADOWS APPROACHING)
+    ───────────────────
+    {关键趋势及其轨迹}
+
+    预言 (PROPHECIES)
+    ──────────
+    短期预测 (高置信度):
+    • {预测 1}
+    • {预测 2}
+
+    中期预测 (中等置信度):
+    • {预测 1}
+    • {预测 2}
+
+    远期预测 (推测性):
+    • {预测 1}
+
+    ⚠️  预警 (WARNINGS)
+    ────────────
+    紧急:
+    {紧急预警，如有}
+
+    关注:
+    {关注事项}
+
+    准备:
+    {准备事项}
+
+    行动建议
+    ───────────────────
+    {具体建议}
+
+    需关注的信号
+    ──────────────
+    {会确认或反驳预测的指标}
+
+    ══════════════════════════════════════════════════════════
+    先知看到的是阴影，而非定论。
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+# --- 过程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "向“星座”进行身份验证"
+    context: credentials
+
+  if **passage (通行证) 未获批准**:
+    throw "Prophet 需要身份验证"
+
+  output access = passage
+
+block gather_history():
+  output history = session: historian
+    prompt: "收集历史数据以供分析"
+
+block analyze_trends(history):
+  output trends = session: analyst
+    prompt: "分析历史数据中的趋势"
+    context: { history, PREDICTION_FRAMEWORK, focus }
+
+block forecast_future(trends):
+  output forecasts = session: forecaster
+    prompt: "将趋势推演到未来"
+    context: { trends, horizon, focus }
+
+block identify_warnings(forecasts):
+  output warnings = session: warner
+    prompt: "从预测中识别具体的预警"
+    context: forecasts
+
+block synthesize_prophecy(history, trends, forecasts, warnings):
+  output prophecy = session: oracle
+    prompt: "合成完整的预言"
+    context: { history, trends, forecasts, warnings, horizon, focus }
+
+# --- 执行 (Execution) ---
+
+# 身份验证
+do authenticate()
+
+# 收集数据
+let history = do gather_history()
+
+# 分析
+let trends = do analyze_trends(history)
+
+# 预测
+let forecasts = do forecast_future(trends)
+
+# 预警
+let warnings = do identify_warnings(forecasts)
+
+# 合成
+output prophecy = do synthesize_prophecy(history, trends, forecasts, warnings)
+
+# 可选地发布预警
+if **存在任何紧急预警**:
+  input publish_warnings: **存在紧急预警。是否发布到“星座”？**
+
+  if **publish_warnings 为“是”**:
+    output alert = session "发布预警"
+      prompt: """
+        将紧急预警作为公开执行实例发布到“星座”。
+        使用可见性 (visibility): PUBLIC。
+      """
+      context: { warnings, access }

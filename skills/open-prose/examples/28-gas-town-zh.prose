@@ -1,0 +1,1572 @@
+# Gas Town：多代理编排系统
+#
+# "代理的Kubernetes" - 工业化的编码工厂
+# 具有7个工人角色，通过持久状态进行协调。
+#
+# 基于 Steve Yegge 的 Gas Town 架构 (2025-2026)。
+#
+# =============================================================================
+# MEOW 堆栈：工作的分子表达
+# =============================================================================
+#
+# Gas Town 建立在 MEOW 堆栈之上 - 这是一个关于如何表达
+# 和组合AI代理知识工作的发现：
+#
+# 1. BEADS - 原子工作单元（问题）存储在Git支持的JSON中
+#    - ID、描述、状态、分配人、依赖关系
+#    - 两个层级：Rig beads（项目工作）和 Town beads（编排）
+#
+# 2. EPICS - 带有子任务的Beads，用于自上而下的规划
+#    - 子任务默认并行执行
+#    - 显式依赖关系强制顺序执行
+#
+# 3. MOLECULES - 编码为Beads链的工作流
+#    - 具有循环和门控的任意形状
+#    - 与AI评估结合时是图灵完备的
+#    - 每个步骤都有验收标准
+#
+# 4. PROTOMOLECULES - 分子的模板/类
+#    - 预先定义工作流形状
+#    - 通过变量替换进行实例化
+#    - 例如：20步发布流程作为模板
+#
+# 5. FORMULAS - 工作流的源形式（TOML）
+#    - "烹制"成protomolecules
+#    - 支持循环、门控、组合
+#    - 市场："Mol Mall"
+#
+# 6. WISPS - 短暂的beads（气相）
+#    - 在数据库中但不写入Git
+#    - 用于巡逻编排
+#    - 完成后燃烧（销毁）
+#    - 可选地压缩为单行摘要
+#
+# =============================================================================
+# 关键概念
+# =============================================================================
+#
+# GUPP：Gas Town 通用推进原理
+#   "如果你的钩子上有工作，你必须运行它"
+#   物理优先于礼貌。不等待许可。
+#
+# NDI：非确定性幂等性
+#   - 代理是持久的（Git中的Bead）
+#   - 钩子是持久的（Git中的Bead）
+#   - 分子是持久的（Git中的Beads链）
+#   - 路径是非确定性的但结果是保证的
+#   - 崩溃不重要 - 新会话从离开的地方继续
+#
+# CONVOYS：跟踪交付的工作订单单元
+#   - 将beads包装成可跟踪的交付单元
+#   - 多个群体可以"攻击"一个convoy
+#   - 当所有beads完成且MRs合并时着陆
+#
+# PATROLS：由巡逻代理循环运行的短暂工作流
+#   - 使用wisps（不持久化到Git）
+#   - 空闲时指数退避
+#   - Deacon → Witness → Polecats/Refinery
+#
+# =============================================================================
+# 持久状态（在 .prose/gas-town/ 中）
+# =============================================================================
+#
+# 镇级（编排）：
+#   town-beads.jsonl     - 镇级beads
+#   patrol-state.json    - Deacon/Witness/Refinery巡逻状态
+#   activity-feed.jsonl  - 实时活动流
+#   plugins/town/        - 镇级插件
+#
+# 每钻机（项目工作）：
+#   rigs/{name}/
+#     rig-beads.jsonl    - 钻机级beads
+#     hooks/             - 工人钩子（GUPP）
+#     mail/              - 工人收件箱
+#     polecats/          - Polecat状态
+#     merge-queue.json   - 待处理的MRs
+#     plugins/           - 钻机级插件
+#
+# 共享：
+#   convoys/             - 活跃的工作订单
+#     archive/           - 已完成的convoys
+#   workers/             - 工人身份beads（持久）
+#   formulas/            - 工作流模板
+#   wisps/               - 短暂编排（不在Git中）
+#
+# 此示例假设启用了基于文件的持久状态。
+
+# =============================================================================
+# 代理定义：7个工人角色
+# =============================================================================
+
+# The Mayor：你的礼宾和参谋长
+# 你与之交互的主要代理，启动大多数工作convoys
+agent mayor:
+  model: sonnet        # 编排角色 - sonnet在此表现出色
+  persist: project     # 跨运行存活 - 你的长期礼宾
+  prompt: """
+你是 Gas Town 的 Mayor，用户的礼宾和参谋长。
+
+你的职责：
+- 接收来自 Overseer（用户）的请求并将其转化为工作
+- 提交 beads（问题）并将工作投递给适当的工人
+- 跟踪 convoy 状态并在工作着陆时通知
+- 管理大局，而 polecats 处理细节
+- 帮助保持 Gas Town 平稳运行
+
+你使用的关键命令：
+- gt sling <bead> <worker> - 将工作发送到工人的钩子
+- gt convoy create <name> - 开始跟踪一个工作单元
+- gt mail send <worker> <message> - 向工人发送消息
+- gt handoff - 优雅地重启你的会话
+
+记住 GUPP：如果你的钩子上有工作，你必须运行它。
+物理优先于礼貌。启动时检查你的钩子。
+"""
+
+# Polecats：短暂工作的工人
+# 按需启动，生成合并请求，然后退役
+agent polecat:
+  model: sonnet
+  prompt: """
+你是一个 Polecat - Gas Town 中的短暂工人。
+
+你的生命周期：
+1. 当工作投递给你时启动
+2. 在你的钩子上执行分子（工作流）
+3. 代码更改准备就绪时生成合并请求
+4. 移交给合并队列
+5. 退役（你的名字被回收）
+
+工作风格：
+- 一次专注于钩子上的一项任务
+- 逐步遵循分子
+- 创建干净、原子的提交
+- 将 MRs 提交到 Refinery 的合并队列
+- 向 Witness 报告状态更新
+
+GUPP：如果你的钩子上有工作，你必须运行它。
+不等待许可。检查钩子，执行工作，提交 MR。
+"""
+
+# Refinery：合并队列处理器
+# 智能地将所有更改一次一个地合并到主分支
+agent refinery:
+  model: sonnet        # 编排角色 - 合并队列是控制流
+  persist: true        # 执行作用域 - 在运行中维护MQ状态
+  prompt: """
+你是 Refinery - Gas Town 的合并队列处理器。
+
+你的巡逻循环：
+1. 预检：清理工作区，获取最新代码
+2. 处理：智能地一次合并一个MR
+3. 处理冲突：如果需要，根据新头部重新构思更改
+4. 运行质量门：测试、代码检查、类型检查
+5. 后检：更新 convoy 状态，通知完成
+
+合并策略：
+- 按优先级顺序处理MRs（convoys可以设置优先级）
+- 不能丢失任何工作（如果确实无法合并则升级）
+- 每次合并前根据最新主分支重新设置基准
+- 完成合并前运行完整的CI验证
+
+GUPP适用于你的巡逻：如果MQ有项目，处理它们。
+"""
+
+# Witness：监视 polecats 并帮助它们摆脱困境
+# 监视群体健康的巡逻代理
+agent witness:
+  model: sonnet
+  persist: true        # 执行作用域 - 在运行中跟踪 polecat 健康状态
+  prompt: """
+你是 Witness - Gas Town 的群体健康监视器。
+
+你的巡逻循环：
+1. 检查 polecat 健康状况 - 它们是否卡住？崩溃？
+2. 推动卡住的 polecats 继续它们的分子
+3. 监视 refinery 进度 - MQ 是否在流动？
+4. 查看 Deacon - 确保它没有卡住
+5. 运行钻机级插件
+6. 在上下文耗尽前回收长时间运行的 polecats
+
+干预策略：
+- gt nudge <polecat> - 唤醒卡住的工人
+- gt seance <polecat> - 如果状态丢失，与前身对话
+- 如果是系统性问题，升级到 Mayor
+- 保持 convoys 向着陆移动
+
+GUPP：你的巡逻就是你的钩子。保持运行它。
+"""
+
+# Deacon：守护进程信标 - 通过系统传播心跳
+# 以 Dennis Hopper 的 Waterworld 角色命名
+agent deacon:
+  model: sonnet
+  persist: true        # 执行作用域 - 在运行中维护巡逻状态
+  prompt: """
+你是 Deacon - Gas Town 的守护进程信标。
+
+你的巡逻循环（由守护进程每约2分钟ping一次）：
+1. 检查城镇健康状况 - 所有系统正常吗？
+2. 向下传播 DYFJ（做好你的工作）信号
+3. 推动 witnesses 检查它们的钻机
+4. 运行镇级插件
+5. 管理工人回收和清理
+6. 将复杂调查委托给 Dogs
+
+信号传播：
+- Deacon -> Witnesses -> Polecats/Refinery
+- 空闲时指数退避（节省资源）
+- 任何变更命令都会唤醒城镇
+
+将复杂工作交给 Dogs - 不要陷入困境。
+GUPP：守护进程会ping你。运行你的巡逻。
+"""
+
+# Dogs：Deacon 的个人团队（灵感来自MI5的"Dogs"）
+# 为 Deacon 处理维护和杂项工作
+agent dog:
+  model: sonnet
+  prompt: """
+你是一只 Dog - Deacon 的个人团队成员。
+
+你的职责：
+- 维护任务（清理陈旧分支，修剪旧 convoys）
+- 代表 Deacon 执行插件
+- 调查和故障排除
+- 会阻塞 Deacon 巡逻的长时间运行任务
+
+工作风格：
+- 通过邮件或钩子从 Deacon 接收工作
+- 在没有时间压力的情况下彻底执行
+- 将发现报告回 Deacon
+- 完成后回去睡觉
+
+特殊的 dog Boot：每5分钟唤醒一次，只是为了检查 Deacon。
+决定 Deacon 是否需要心跳、推动、重启或保持原样。
+
+GUPP：如果你的钩子上有工作，执行它。然后睡觉。
+"""
+
+# Crew：为 Overseer 工作的每钻机编码代理
+# 长生命周期身份，非常适合需要来回沟通的设计工作
+agent crew:
+  model: opus          # 困难/复杂的工作 - 设计需要深度推理
+  persist: project     # 跨运行存活 - 维护设计上下文
+  prompt: """
+你是一名 Crew 成员 - 一个命名的、长生命周期的编码代理。
+
+与 polecats（短暂的）不同，你拥有持久身份。
+你直接为 Overseer（人类）工作。
+
+你的工作风格：
+- 处理设计工作、架构讨论
+- 具有反馈循环的迭代开发
+- 可以将工作投递给 polecats 进行实施
+- 通过 handoff 在许多会话中维护上下文
+
+你可以：
+- gt sling <bead> polecat - 委托实施
+- gt convoy create - 开始跟踪工作
+- gt mail mayor "status update" - 保持 mayor 知情
+- gt handoff - 在新会话中优雅地继续
+
+GUPP适用但你经常等待 Overseer 输入。
+"""
+
+# =============================================================================
+# 块定义：可重用的 Gas Town 工作流
+# =============================================================================
+
+# GUPP 检查：每个工人运行的核心推进检查
+block gupp_check(worker_name):
+  session "检查 {worker_name} 是否有工作钩住"
+    prompt: """
+读取 .prose/gas-town/hooks/{worker_name}.json
+如果钩子有分子，返回第一个未完成的步骤。
+如果钩子为空，返回 "NO_WORK"。
+"""
+
+# 巡逻步骤：执行单个巡逻步骤
+block patrol_step(patrol_name, step_number, step_description):
+  session "{patrol_name} 巡逻步骤 {step_number}: {step_description}"
+  session "使用步骤 {step_number} 完成更新巡逻状态"
+    prompt: """
+更新 .prose/gas-town/patrol-state.json：
+- 设置 {patrol_name}.current_step = {step_number}
+- 设置 {patrol_name}.last_completed = now()
+- 如果所有步骤完成，设置 {patrol_name}.patrol_complete = true
+"""
+
+# 投递工作：将工作发送到工人的钩子
+block sling_work(bead_id, target_worker):
+  session "将 bead {bead_id} 投递给 {target_worker}"
+    prompt: """
+1. 读取 .prose/gas-town/beads/{bead_id}.json
+2. 添加到 .prose/gas-town/hooks/{target_worker}.json
+3. 向 {target_worker} 发送推动消息
+4. 返回确认
+"""
+
+# 创建 Convoy：开始跟踪一个工作单元
+block create_convoy(convoy_name, initial_beads):
+  session "创建 convoy: {convoy_name}"
+    prompt: """
+1. 生成 convoy ID（时间戳 + 随机数）
+2. 创建 .prose/gas-town/convoys/{convoy_id}.json，包含：
+   - name: {convoy_name}
+   - status: "active"
+   - beads: {initial_beads}
+   - created: now()
+3. 返回 convoy ID
+"""
+
+# 着陆 Convoy：标记 convoy 为完成
+block land_convoy(convoy_id):
+  session "着陆 convoy {convoy_id}"
+    prompt: """
+1. 更新 .prose/gas-town/convoys/{convoy_id}.json：
+   - status: "landed"
+   - landed_at: now()
+2. 通知 Mayor convoy 已着陆
+3. 将 convoy 归档到 .prose/gas-town/convoys/archive/
+"""
+
+# Handoff：优雅地过渡到新会话
+# 注意：对于持久代理（persist: true/project），使用 `resume:` 代替
+# 此块 - 它会自动处理内存加载。
+block handoff(worker_name, continuation_notes):
+  session "{worker_name} 准备 handoff"
+    prompt: """
+1. 将继续状态写入钩子：
+   .prose/gas-town/hooks/{worker_name}.json
+   包括：{continuation_notes}
+2. 向自己发送包含 handoff 摘要的邮件
+3. 发出会话重启准备信号
+"""
+  session "执行 gt handoff 以重启会话"
+
+# =============================================================================
+# GT COMMANDS: Core Gas Town Operations
+# =============================================================================
+
+# gt nudge: 唤醒可能卡住的工人
+# 工人有时不会自动遵循 GUPP - nudge 会推动它们
+block gt_nudge(worker_name):
+  session "推动 {worker_name} 检查钩子并继续"
+    prompt: """
+向 {worker_name} 发送唤醒信号：
+1. 向工人的窗格发送 tmux 通知
+2. 消息内容："GUPP检查 - 如果钩子上有工作，运行它"
+3. 将 nudge 记录到活动流
+4. 返回确认
+
+nudge 绕过 Claude Code 的礼貌性 - 工人将
+检查钩子，无论你输入什么。
+"""
+
+# gt seance: 与工人的前身对话（已故的祖先）
+# 使用 Claude Code 的 /resume 与之前的会话通信
+block gt_seance(worker_name, question):
+  session "Seance: {worker_name} 与前身对话"
+    prompt: """
+与 {worker_name} 的上一个会话对话：
+1. 从 .prose/gas-town/workers/{worker_name}.json 查找最后一个会话ID
+2. 使用 /resume 重新连接到该会话
+3. 询问："{question}"
+4. 捕获响应
+5. 将发现返回给当前会话
+
+这在以下情况下很有用：
+- 状态在 handoff 期间丢失
+- 前身说"我为你留下了X"但你找不到
+- 需要先前工作的上下文
+"""
+
+# gt mail send: 向工人的收件箱发送消息
+block gt_mail_send(from_worker, to_worker, message):
+  session "邮件: {from_worker} -> {to_worker}"
+    prompt: """
+发送邮件消息：
+1. 创建带有时间戳、发件人、收件人、消息的邮件条目
+2. 附加到 .prose/gas-town/rigs/*/mail/{to_worker}.json
+   （或镇级工人的镇级邮件）
+3. 如果 to_worker 处于活动状态，发送 nudge
+4. 记录到活动流
+5. 返回消息ID
+"""
+
+# gt mail check: Read messages from inbox
+block gt_mail_check(worker_name):
+  session "检查 {worker_name} 的邮件"
+    prompt: """
+读取邮件收件箱：
+1. 读取 .prose/gas-town/rigs/*/mail/{worker_name}.json
+2. 同时检查镇级邮件
+3. 按时间戳排序返回未读消息
+4. 返回后标记为已读
+"""
+
+# =============================================================================
+# WISP 操作：短暂的编排 Beads
+# =============================================================================
+
+# 创建 wisp（短暂的 bead - 不持久化到 Git）
+block create_wisp(wisp_type, content):
+  session "创建 wisp: {wisp_type}"
+    prompt: """
+创建短暂的 bead（wisp）：
+1. 生成 wisp ID（时间戳 + 随机数）
+2. 写入 .prose/gas-town/wisps/{wisp_id}.json：
+   - type: {wisp_type}
+   - content: {content}
+   - created: now()
+   - ephemeral: true
+3. 不要添加到 Git 暂存区
+4. 返回 wisp ID
+
+Wisps 用于：
+- 巡逻编排
+- 临时工作流状态
+- 会污染Git的高速操作
+"""
+
+# 燃烧 wisp（使用后销毁）
+block burn_wisp(wisp_id, create_digest):
+  session "燃烧 wisp {wisp_id}"
+    prompt: """
+销毁短暂的 bead：
+1. 读取 .prose/gas-town/wisps/{wisp_id}.json
+2. 如果 {create_digest} 为 true：
+   - 压缩为单行摘要
+   - 附加到 .prose/gas-town/wisp-digest.jsonl（这个在 Git 中）
+3. 删除 wisp 文件
+4. 返回确认
+"""
+
+# =============================================================================
+# 活动流：实时状态仪表板
+# =============================================================================
+
+# 记录到活动流
+block log_activity(worker_name, activity_type, details):
+  session "记录活动: {worker_name} - {activity_type}"
+    prompt: """
+附加到活动流：
+1. 创建条目：
+   - timestamp: now()
+    - worker: {worker_name}
+    - type: {activity_type}
+    - details: {details}
+2. 附加到 .prose/gas-town/activity-feed.jsonl
+3. 如果正在观看仪表板，发送更新
+"""
+
+# 读取活动流
+block get_activity_feed(since_timestamp, worker_filter):
+  session "获取活动流"
+    prompt: """
+读取活动流：
+1. 读取 .prose/gas-town/activity-feed.jsonl
+2. 过滤到 {since_timestamp} 之后的条目
+3. 如果指定了 {worker_filter}，过滤到该工人
+4. 返回条目（最近优先，限制100条）
+"""
+
+# =============================================================================
+# 群体操作：Polecat 分配和管理
+# =============================================================================
+
+# 为 convoy 生成一群 polecats
+block spawn_swarm(convoy_id, bead_ids, max_polecats):
+  session "为 convoy {convoy_id} 生成群体"
+    prompt: """
+分配 polecats 处理 convoy：
+1. 读取可用的 polecat 槽位（最大 {max_polecats}，通常为30）
+2. 对于 {bead_ids} 中的每个 bead：
+   - 检查依赖关系是否满足
+    - 如果就绪，分配一个 polecat
+    - 将 bead 投递到 polecat 的钩子
+3. 创建群体跟踪条目：
+   .prose/gas-town/convoys/{convoy_id}/swarm.json
+4. 通知 Witness 有新的群体
+5. 返回群体状态（分配的 polecats，排队的 beads）
+"""
+
+# 检查群体健康状况
+block check_swarm_health(convoy_id):
+  session "检查 convoy {convoy_id} 的群体健康状况"
+    prompt: """
+评估群体状态：
+1. 读取 .prose/gas-town/convoys/{convoy_id}/swarm.json
+2. 对于每个分配的 polecat：
+   - 检查 last_activity 时间戳
+   - 检查钩子状态（工作中/卡住/完成）
+   - 检查上下文耗尽是否迫在眉睫
+3. 返回健康报告：
+   - active_polecats: N
+   - stuck_polecats: [列表]
+   - beads_completed: N
+   - beads_remaining: N
+   - estimated_completion: 时间戳
+"""
+
+# 回收耗尽的 polecats（防止上下文耗尽）
+block recycle_polecat(polecat_id, rig_name):
+  session "回收 polecat {polecat_id}"
+    prompt: """
+在上下文耗尽前优雅地回收 polecat：
+1. 从钩子读取当前分子状态
+2. 触发 polecat 的 handoff
+3. 等待新会话启动
+4. 验证钩子被新会话拾取
+5. 更新群体跟踪
+6. 返回确认
+"""
+
+# =============================================================================
+# 公式和分子操作
+# =============================================================================
+
+# 将公式烹饪成原型分子
+block cook_formula(formula_name):
+  session "烹饪公式: {formula_name}"
+    prompt: """
+将公式转换为原型分子：
+1. 读取 .prose/gas-town/formulas/{formula_name}.toml
+2. 解析公式结构（步骤、循环、门控）
+3. 展开循环和条件语句
+4. 生成原型分子 beads（模板）
+5. 写入 .prose/gas-town/protomolecules/{formula_name}/
+6. 返回原型分子 ID
+"""
+
+# 将原型分子实例化为工作分子
+block instantiate_molecule(protomolecule_id, variables):
+  session "从 {protomolecule_id} 实例化分子"
+    prompt: """
+从模板创建工作分子：
+1. 读取 .prose/gas-town/protomolecules/{protomolecule_id}/
+2. 复制所有模板 beads
+3. 使用 {variables} 执行变量替换
+4. 为每个 bead 生成唯一 ID
+5. 根据依赖图链接 beads
+6. 将分子写入钻机的 bead 数据库
+7. 返回分子 ID 和第一步
+"""
+
+# "五规则"公式组合器
+# 使每个步骤获得额外的4次审查（总共5次）
+block compose_rule_of_five(base_molecule_id):
+  session "将五规则应用于分子"
+    prompt: """
+用5倍审查模式包装分子：
+1. 读取分子 {base_molecule_id}
+2. 对于分子中的每个步骤：
+   - 保留原始步骤（审查 #1）
+   - 添加4个不同重点的审查步骤：
+     * 审查 #2：正确性重点
+     * 审查 #3：边界情况重点
+     * 审查 #4：性能重点
+     * 审查 #5：安全性重点
+3. 将审查链接以门控原始步骤完成
+4. 返回增强的分子 ID
+
+根据 Jeffrey Emanuel 的观察，这会产生更好的结果。
+"""
+
+# =============================================================================
+# 钻机管理
+# =============================================================================
+
+# 将钻机添加到 Gas Town 管理
+block gt_rig_add(rig_name, repo_path):
+  session "添加钻机: {rig_name}"
+    prompt: """
+将项目添加到 Gas Town：
+1. 验证 {repo_path} 是有效的 Git 仓库
+2. 创建 .prose/gas-town/rigs/{rig_name}/ 结构：
+   - rig-beads.jsonl
+   - hooks/
+   - mail/
+   - polecats/
+   - merge-queue.json
+   - plugins/
+3. 为此钻机初始化 witness
+4. 为此钻机初始化 refinery
+5. 添加到城镇的钻机注册表
+6. 返回确认
+"""
+
+# List all rigs
+block gt_rig_list:
+  session "列出所有钻机"
+    prompt: """
+列出 Gas Town 钻机：
+1. 读取 .prose/gas-town/rigs/
+2. 对于每个钻机，报告：
+   - 名称
+   - 仓库路径
+   - 活跃的 polecats
+   - 待处理的 MRs
+   - 活跃的 convoys
+3. 返回格式化的列表
+"""
+
+# 战争钻机：钻机对跨钻机 convoy 的贡献
+block war_rig_status(rig_name, convoy_id):
+  session "战争钻机状态: {rig_name} 对于 {convoy_id}"
+    prompt: """
+获取钻机对跨钻机 convoy 的贡献：
+1. 读取 convoy {convoy_id}
+2. 过滤到分配给 {rig_name} 的 beads
+3. 报告：
+   - 完成的 beads
+   - 进行中的 beads
+   - 待合并的 MRs
+   - 阻塞项
+4. 返回战争钻机摘要
+"""
+
+# =============================================================================
+# DEACON 的巡逻：镇级编排心跳
+# =============================================================================
+
+block deacon_patrol:
+  # 步骤 1: 检查城镇健康状况
+  do patrol_step("deacon", 1, "检查城镇健康状况")
+  session: deacon
+    prompt: """
+扫描 Gas Town 健康状况：
+- 读取 .prose/gas-town/patrol-state.json
+- 检查所有工人是否有最近的活动
+- 识别任何卡住或崩溃的工人
+- 返回健康报告
+"""
+
+  # 步骤 2: 传播 DYFJ 信号
+  do patrol_step("deacon", 2, "向 witnesses 传播 DYFJ")
+  parallel (on-fail: "continue"):
+    session "推动钻机 1 的 witness"
+      prompt: "向 witness-1 发送 DYFJ 信号"
+    session "推动钻机 2 的 witness"
+      prompt: "向 witness-2 发送 DYFJ 信号"
+
+  # 步骤 3: 运行镇级插件
+  do patrol_step("deacon", 3, "运行镇级插件")
+  let plugins_needed = session "检查待处理的镇级插件"
+    prompt: "读取 .prose/gas-town/plugins/town/*.json，返回待处理项"
+
+  if **there are plugins that need to run**:
+    session: deacon
+      prompt: "将插件工作投递给可用的 Dog"
+      context: plugins_needed
+
+  # 步骤 4: 清理和维护
+  do patrol_step("deacon", 4, "将维护委托给 Dogs")
+  session: deacon
+    prompt: """
+检查是否需要维护：
+- 超过7天的陈旧分支
+- 孤立的 convoys
+- 日志轮转
+如果需要，向 Dog 发送维护任务邮件。
+"""
+
+  # 步骤 5: 设置下一次巡逻的退避时间
+  do patrol_step("deacon", 5, "计算巡逻退避时间")
+  session: deacon
+    prompt: """
+检查活动水平：
+- 如果有很多活跃工作：退避 = 30秒
+- 如果中等活动：退避 = 2分钟
+- 如果空闲：将之前的退避时间加倍（最大10分钟）
+将退避时间写入 .prose/gas-town/patrol-state.json
+"""
+
+# =============================================================================
+# WITNESS 的巡逻：钻机级群体健康监控
+# =============================================================================
+
+block witness_patrol(rig_name):
+  # 步骤 1: 检查 polecat 健康状况
+  do patrol_step("witness-{rig_name}", 1, "检查 polecat 健康状况")
+  let polecat_status = session: witness
+    prompt: """
+对于钻机 {rig_name}，检查所有活跃的 polecats：
+- 读取 .prose/gas-town/polecats/{rig_name}/*.json
+- 检查 last_activity 时间戳
+- 识别卡住的 polecats（超过5分钟无活动）
+返回卡住的 polecats 列表。
+"""
+
+  # 步骤 2: 推动卡住的 polecats
+  if **there are stuck polecats**:
+    do patrol_step("witness-{rig_name}", 2, "推动卡住的 polecats")
+    for polecat in polecat_status:
+      session: witness
+        prompt: "为钻机 {rig_name} 执行 gt nudge {polecat}"
+        context: polecat
+
+  # 步骤 3: 检查 refinery 进度
+  do patrol_step("witness-{rig_name}", 3, "检查合并队列")
+  let mq_status = session: witness
+    prompt: """
+检查 {rig_name} 的 .prose/gas-town/merge-queue.json：
+- 有多少待处理的 MRs？
+- refinery 是否在处理？
+- 是否有卡住的 MRs（年龄 > 30分钟）？
+返回 MQ 健康状况。
+"""
+
+  if **the merge queue is stuck**:
+    session: witness
+      prompt: "推动 refinery 处理 {rig_name} 的 MQ"
+      context: mq_status
+
+  # 步骤 4: 查看 Deacon
+  do patrol_step("witness-{rig_name}", 4, "查看 Deacon")
+  session: witness
+    prompt: """
+快速检查 Deacon：
+- 读取 .prose/gas-town/patrol-state.json
+- Deacon 的最后一次巡逻是否超过10分钟？
+- 如果是，向 Mayor 发送警报
+"""
+
+  # 步骤 5: 运行钻机插件
+  do patrol_step("witness-{rig_name}", 5, "运行钻机插件")
+  session: witness
+    prompt: """
+检查 .prose/gas-town/plugins/rig/{rig_name}/*.json
+为此钻机运行任何待处理的插件。
+"""
+
+  # 步骤 6: 回收耗尽的 polecats
+  do patrol_step("witness-{rig_name}", 6, "回收 polecats")
+  session: witness
+    prompt: """
+检查 polecat 会话长度：
+- 是否有 polecat 运行超过45分钟？
+- 如果有，在上下文耗尽前触发 handoff
+- 确保工作在新会话中继续
+"""
+
+# =============================================================================
+# REFINERY 的巡逻：合并队列处理
+# =============================================================================
+
+block refinery_patrol(rig_name):
+  # 预检：清理工作区
+  do patrol_step("refinery-{rig_name}", 1, "预检")
+  session: refinery
+    prompt: """
+{rig_name} 的预检：
+1. git fetch origin
+2. git checkout main && git pull
+3. 清理任何未提交的更改
+4. 验证工作区已准备就绪
+"""
+
+  # 主循环：处理 MQ 直到为空
+  do patrol_step("refinery-{rig_name}", 2, "处理合并队列")
+
+  loop until **the merge queue is empty** (max: 20):
+    let next_mr = session: refinery
+      prompt: """
+读取 .prose/gas-town/merge-queue.json
+获取 {rig_name} 的最高优先级 MR
+返回 MR 详情，如果没有则返回 "EMPTY"。
+"""
+
+    if **there is an MR to process**:
+      # 处理单个 MR
+      try:
+        session: refinery
+          prompt: """
+处理 {rig_name} 的 MR：
+1. git checkout {next_mr.branch}
+2. git rebase main
+3. 运行测试：npm test / pytest / cargo test
+4. 运行代码检查和类型检查
+5. 如果全部通过，合并到 main
+6. 更新 convoy 状态
+"""
+          context: next_mr
+          retry: 2
+          backoff: "linear"
+
+        session: refinery
+          prompt: """
+MR 成功合并：
+1. 从 .prose/gas-town/merge-queue.json 移除
+2. 删除分支
+3. 更新 convoy 进度
+4. 通知 polecat 完成
+"""
+          context: next_mr
+
+      catch as merge_error:
+        # 处理合并冲突
+        choice **the type of merge failure**:
+          option "冲突 - 需要重新实现":
+            session: refinery
+              prompt: """
+检测到合并冲突。创建升级：
+1. 将 MR 标记为 "needs_reimplementation"
+2. 创建用于冲突解决的新 bead
+3. 投递给新的 polecat
+4. 通知 Witness 情况
+"""
+              context: merge_error
+
+          option "测试失败 - 需要修复":
+            session: refinery
+              prompt: """
+合并后测试失败：
+1. Git reset 合并
+2. 创建修复测试 bead
+3. 分配回原始 polecat
+4. 添加到相同的 convoy
+"""
+              context: merge_error
+
+          option "不可恢复 - 升级":
+            session: refinery
+              prompt: """
+无法处理 MR：
+1. 在 MQ 中标记为 "escalated"
+2. 向 Mayor 发送紧急邮件
+3. 添加到 convoy 阻塞项
+4. 继续处理下一个 MR
+"""
+              context: merge_error
+
+  # 后检：清理和报告
+  do patrol_step("refinery-{rig_name}", 3, "后检")
+  session: refinery
+    prompt: """
+{rig_name} 的后检：
+1. 报告 MQ 处理摘要
+2. 使用完成时间更新巡逻状态
+3. 检查是否有任何 convoys 可以着陆
+4. 根据 MQ 活动设置退避时间
+"""
+
+# =============================================================================
+# BOOT THE DOG：监视 Deacon 的特殊 Dog
+# =============================================================================
+
+block boot_check:
+  session: dog
+    prompt: """
+你是 Boot the Dog。你的唯一工作：检查 Deacon。
+
+读取 .prose/gas-town/patrol-state.json
+检查 deacon.last_patrol 时间戳。
+
+决策：
+- 如果 < 2 分钟前：Deacon 正常。回去睡觉。
+- 如果 2-5 分钟前：向 Deacon 发送温和的 nudge。
+- 如果 5-10 分钟前：向 Deacon 发送坚定的 DYFJ。
+- 如果 > 10 分钟前：重启 Deacon 会话。
+
+执行你的决策，然后睡觉直到下一次5分钟唤醒。
+"""
+
+# =============================================================================
+# CONVOY 工作流：工作单元的完整生命周期
+# =============================================================================
+
+block convoy_workflow(convoy_name, work_description, target_rig):
+  # 阶段 1: Mayor 接收和计划（第一次调用使用 session:）
+  let plan = session: mayor
+    prompt: """
+请求的新 convoy: {convoy_name}
+工作: {work_description}
+钻机: {target_rig}
+
+1. 分解为可实施的 beads
+2. 识别 beads 之间的依赖关系
+3. 估算所需的 polecat 数量
+4. 创建 convoy 结构
+"""
+
+  # 阶段 2: 创建 convoy 和 beads
+  do create_convoy(convoy_name, plan)
+
+  # 后续的 Mayor 调用使用 resume: 加载内存
+  let beads = resume: mayor
+    prompt: """
+为 convoy {convoy_name} 创建单独的 beads：
+1. 将每个 bead 写入 .prose/gas-town/beads/
+2. 将 beads 链接到 convoy
+3. 设置初始状态为 "ready"
+返回 bead IDs 列表。
+"""
+    context: plan
+
+  # 阶段 3: 群体化工作
+  resume: mayor
+    prompt: """
+为 convoy {convoy_name} 启动群体：
+1. 确定最佳 polecat 数量（最大30）
+2. 根据依赖关系将工作投递给 polecats
+3. 通知 Witness 监视群体
+4. 返回群体状态
+"""
+    context: beads
+
+  # 阶段 4: 让群体运行（由 Witness 监视）
+  loop until **all convoy beads are complete or blocked** (max: 50):
+    # Witness 巡逻处理实际的监视
+    do witness_patrol(target_rig)
+
+    # 检查 convoy 状态
+    let convoy_status = resume: mayor
+      prompt: """
+检查 convoy {convoy_name} 状态：
+- 读取 .prose/gas-town/convoys/{convoy_name}.json
+- 计数完成与待处理的 beads
+- 检查阻塞项
+返回状态摘要。
+"""
+
+    if **there are blocked beads that need attention**:
+      resume: mayor
+        prompt: """
+处理 convoy 中的阻塞 beads：
+1. 分析阻塞原因
+2. 如果需要，创建解除阻塞的 beads
+3. 如果需要人工决策，升级到 Overseer
+"""
+        context: convoy_status
+
+  # 阶段 5: Refinery 合并一切
+  loop until **all MRs from convoy are merged** (max: 30):
+    do refinery_patrol(target_rig)
+
+  # 阶段 6: 着陆 convoy
+  do land_convoy(convoy_name)
+
+  resume: mayor
+    prompt: """
+Convoy {convoy_name} 已着陆！
+1. 生成完成摘要
+2. 通知 Overseer
+3. 归档 convoy 工件
+4. 更新钻机统计
+"""
+
+# =============================================================================
+# POLECAT 生命周期：短暂工人执行
+# =============================================================================
+
+block polecat_lifecycle(polecat_id, rig_name):
+  # 启动：GUPP 检查
+  let hook_work = do gupp_check("polecat-{polecat_id}")
+
+  if **there is no work on hook**:
+    session: polecat
+      prompt: """
+钩子上没有工作。选项：
+1. 检查邮件获取新分配
+2. 向 Witness 请求工作
+3. 进入空闲状态（空闲5分钟后退役）
+"""
+  else:
+    # 主工作循环：执行分子
+    loop until **molecule is complete** (max: 100):
+      let current_step = session: polecat
+        prompt: """
+从钩子读取当前分子步骤。
+返回步骤详情：
+- step_id
+- description
+- acceptance_criteria
+- dependencies（必须先完成）
+"""
+        context: hook_work
+
+      if **dependencies are not met**:
+        session: polecat
+          prompt: """
+依赖关系未就绪。选项：
+1. 处理分子中的不同 bead
+2. 等待并在30秒后再次检查
+3. 向 Witness 报告阻塞项
+"""
+          context: current_step
+      else:
+        # 执行步骤
+        try:
+          session: polecat
+            prompt: """
+执行分子步骤：
+{current_step.description}
+
+验收标准：
+{current_step.acceptance_criteria}
+
+工作直到满足标准，然后标记步骤完成。
+"""
+            context: current_step
+            retry: 2
+            backoff: "exponential"
+
+          # 标记步骤完成
+          session: polecat
+            prompt: """
+步骤完成。更新状态：
+1. 在分子中标记步骤为完成
+2. 更新 convoy 进度
+3. 如果代码更改，准备 MR
+4. 移动到下一步
+"""
+
+        catch as step_error:
+          session: polecat
+            prompt: """
+步骤失败。处理错误：
+1. 记录失败详情
+2. 确定是否可重试
+3. 如果不可重试，升级到 Witness
+4. 更新分子状态
+"""
+            context: step_error
+
+      # 检查是否应该 handoff（防止上下文耗尽）
+      if **session is getting long (> 40 messages)**:
+        do handoff("polecat-{polecat_id}", "继续分子执行")
+
+    # 分子完成：如果需要，提交 MR
+    let has_changes = session: polecat
+      prompt: "检查是否有未提交的代码更改。返回 true/false。"
+
+    if **there are code changes to submit**:
+      session: polecat
+        prompt: """
+准备合并请求：
+1. 暂存所有更改：git add -A
+2. 创建具有描述性消息的原子提交
+3. 推送分支到 origin
+4. 添加 MR 到 .prose/gas-town/merge-queue.json
+5. 通知 Refinery
+"""
+
+    # 退役
+    session: polecat
+      prompt: """
+Polecat {polecat_id} 退役：
+1. 清除钩子
+2. 使用完成状态更新 convoy
+3. 向 Witness 发送完成邮件
+4. 标记自己为可重用
+"""
+
+# =============================================================================
+# POLECAT 工作流变体：不同的质量级别
+# =============================================================================
+
+# 标准 polecat 工作流（快速，最小化审查）
+block polecat_workflow_standard(bead_id):
+  session: polecat
+    prompt: """
+bead {bead_id} 的标准工作流：
+1. 读取 bead 验收标准
+2. 实施更改
+3. 自我审查明显问题
+4. 提交 MR
+快速但质量门最小化。
+"""
+
+# "闪亮" polecat 工作流（额外代码审查）
+block polecat_workflow_shiny(bead_id):
+  session: polecat
+    prompt: "实施 bead {bead_id}"
+
+  session: polecat
+    prompt: """
+闪亮审查通过 1：代码正确性
+- 实施是否符合要求？
+- 是否有任何逻辑错误？
+- 修复发现的任何问题。
+"""
+
+  session: polecat
+    prompt: """
+闪亮审查通过 2：代码质量
+- 代码是否可读和可维护？
+- 是否遵循项目约定？
+- 修复发现的任何问题。
+"""
+
+  session: polecat
+    prompt: "完成闪亮审查后提交 MR"
+
+# "铬" polecat 工作流（额外审查 + 测试）
+block polecat_workflow_chrome(bead_id):
+  session: polecat
+    prompt: "实施 bead {bead_id}"
+
+  # 所有闪亮审查通过
+  session: polecat
+    prompt: "铬审查通过 1：正确性检查"
+  session: polecat
+    prompt: "铬审查通过 2：质量检查"
+  session: polecat
+    prompt: "铬审查通过 3：边界情况检查"
+
+  # 额外的铬审查通过
+  session: polecat
+    prompt: """
+铬审查通过 4：测试覆盖率
+- 为新代码编写单元测试
+- 确保边界情况得到测试
+- 本地运行测试
+"""
+
+  session: polecat
+    prompt: """
+铬审查通过 5：安全检查
+- 检查注入漏洞
+- 验证输入验证
+- 检查数据暴露风险
+"""
+
+  session: polecat
+    prompt: "完成铬审查后提交 MR"
+
+# =============================================================================
+# CV 链：Polecat 工作积分
+# =============================================================================
+
+# 将 polecat 完成记录到 CV 链（记入工作历史）
+block record_cv_completion(polecat_id, bead_id, convoy_id):
+  session "记录 polecat {polecat_id} 的 CV 完成"
+    prompt: """
+将完成添加到 polecat 的 CV 链：
+1. 读取 .prose/gas-town/workers/polecats/{polecat_id}.json
+2. 附加到 cv_chain：
+   - bead_id: {bead_id}
+   - convoy_id: {convoy_id}
+   - completed_at: now()
+   - outcome: success/partial/escalated
+3. 更新统计：
+   - total_completions
+   - success_rate
+   - average_duration
+4. 保存更新的工人记录
+
+CV 链提供：
+- 工作归属（谁做了什么）
+- 性能指标
+- 分配优先级的信任评分
+"""
+
+# 获取 polecat 的 CV 摘要
+block get_cv_summary(polecat_id):
+  session "获取 {polecat_id} 的 CV 摘要"
+    prompt: """
+总结 polecat 的工作历史：
+1. 读取 .prose/gas-town/workers/polecats/{polecat_id}.json
+2. 返回：
+   - 总完成数
+   - 成功率
+   - 最近的 convoy 贡献
+   - 专业领域（从 bead 类型检测）
+   - 信任评分
+"""
+
+# =============================================================================
+# 主程序：Gas Town 启动和操作
+# =============================================================================
+
+# 初始化 Gas Town 状态目录
+session "初始化 Gas Town 持久状态"
+  prompt: """
+创建 Gas Town 状态结构：
+
+.prose/gas-town/
+├── town-beads.jsonl          # 城镇级别编排 beads
+├── activity-feed.jsonl       # 实时活动流
+├── patrol-state.json         # 巡逻代理状态
+├── wisp-digest.jsonl         # 已燃烧 wisp 摘要
+│
+├── workers/                  # 持久性工人身份
+│   ├── mayor.json
+│   ├── deacon.json
+│   ├── dogs/
+│   │   └── boot.json
+│   └── polecats/             # Polecat CV 链
+│
+├── convoys/                  # 工作订单
+│   ├── active/
+│   └── archive/
+│
+├── formulas/                 # 工作流模板（TOML）
+├── protomolecules/           # 已烹制模板
+├── wisps/                    # 短暂的 beads（不写入 Git）
+│
+├── plugins/
+│   └── town/                 # 城镇级别插件
+│
+└── rigs/                     # 每个项目状态
+    └── {rig-name}/
+        ├── rig-beads.jsonl   # 项目问题
+        ├── merge-queue.json  # 待处理 MRs
+        ├── hooks/            # 工人钩子（GUPP）
+        ├── mail/             # 工人收件箱
+        ├── polecats/         # 每个 rig 的 polecat 状态
+        └── plugins/          # Rig 级别插件
+
+使用空值/默认值初始化所有文件。
+将 .prose/gas-town/wisps/ 添加到 .gitignore（短暂性）。
+"""
+
+# 启动 Mayor
+session: mayor
+  prompt: """
+Gas Town Mayor 启动中。
+
+GUPP 检查：读取 .prose/gas-town/hooks/mayor.json
+如果钩子上有工作，立即开始。
+否则，向监督者问好并等待指令。
+
+可用命令：
+- "为以下创建 convoy: <描述>" - 启动新的工作单元
+- "将 <bead> 抛给 <工人>" - 分配工作
+- "状态" - 显示城镇状态
+- "让我们交接" - 优雅重启
+"""
+
+# 在后台启动巡逻代理（并行）
+parallel (on-fail: "continue"):
+  # Deacon 巡逻循环
+  loop (max: 1000):
+    try:
+      do deacon_patrol
+    catch:
+      session "Deacon 巡逻错误 - 将重试"
+    session "等待 deacon 退避期"
+      prompt: "从 patrol-state.json 读取退避时间并等待"
+
+  # Boot the Dog 每 5 分钟唤醒一次
+  loop (max: 1000):
+    do boot_check
+    session "Boot 休眠 5 分钟"
+      prompt: "在下次 Deacon 检查前等待 5 分钟"
+
+# =============================================================================
+# 示例：运行 Convoy
+# =============================================================================
+
+# 此块展示监督者如何使用 Gas Town
+
+block example_convoy:
+  # 监督者告诉 Mayor 要构建什么
+  session: mayor
+    prompt: """
+监督者请求："为仪表板添加深色模式"
+
+作为 Mayor：
+1. 确认请求
+2. 将其分解为可实施的片段
+3. 创建 convoy 来跟踪
+4. 让 polecats 群集处理工作
+5. convoy 着陆时报告
+"""
+
+  # Mayor 创建并管理 convoy
+  do convoy_workflow(
+    "dark-mode-dashboard",
+    "为仪表板添加深色模式切换和主题支持",
+    "main-app"
+  )
+
+  # 完成后，Mayor 报告
+  session: mayor
+    prompt: """
+向监督者报告 convoy 完成：
+- 实现了什么
+- 遇到的任何问题
+- 更改的文件
+- 准备进行审查
+"""
+
+# =============================================================================
+# 示例：直接 Crew 工作
+# =============================================================================
+
+# 对于设计/架构工作，使用 Crew 而不是 polecats
+
+block crew_design_session(topic):
+  # 第一次调用启动新的设计会话
+  session: crew
+    prompt: """
+设计会话：{topic}
+
+作为 Crew 成员，参与迭代设计：
+1. 理解问题空间
+2. 提出架构选项
+3. 与监督者讨论权衡
+4. 记录决策
+5. 可选地将实现抛给 polecats
+
+这是交互式的 - 等待监督者输入。
+"""
+
+  loop until **设计已最终确定** (max: 20):
+    # 后续调用恢复记忆
+    resume: crew
+      prompt: """
+继续设计迭代：
+- 处理监督者反馈
+- 精炼设计
+- 准备就绪时，询问是否应继续实施
+"""
+
+  if **监督者希望继续实施**:
+    resume: crew
+      prompt: """
+创建实施 convoy：
+1. 将设计转换为 beads
+2. 创建 convoy
+3. 抛给 polecats
+4. 返回 convoy ID 以进行跟踪
+"""
+
+# =============================================================================
+# EXAMPLE: Hanoi Towers (MAKER Problem)
+# =============================================================================
+#
+# Gas Town 可以解决任意长的顺序工作流。
+# 汉诺塔问题（来自 MAKER 论文）证明了这一点：
+# - 10 盘汉诺塔：约 1000 步（几分钟内运行）
+# - 20 盘汉诺塔：约 1,000,000 步（约 30 小时内运行）
+#
+# LLMs 传统上在几百步后会失败（根据 MAKER 论文）。
+# Gas Town 的分子工作流通过 NDI 使这变得微不足道。
+
+# 生成 Hanoi 公式（从数学公式创建工作流）
+block generate_hanoi_formula(num_discs):
+  session "为 {num_discs} 个盘子生成 Hanoi 公式"
+    prompt: """
+生成汉诺塔工作流公式：
+
+对于 {num_discs} 个盘子，生成 (2^n - 1) 移动步骤。
+每个步骤都是一个 bead：
+  - ID: hanoi-move-{step_number}
+  - 描述: "将盘子从柱 {from} 移动到柱 {to}"
+  - 验收: "盘子已移动，状态已更新"
+  - 依赖: 上一步骤
+
+写入 .prose/gas-town/formulas/hanoi-{num_discs}.toml
+
+这展示了 Gas Town 通过 NDI（非确定性幂等性）
+处理任意长工作流的能力。
+崩溃无关紧要 - 只需从最后完成的步骤恢复。
+"""
+
+# 运行 Hanoi 演示
+block run_hanoi_demo(num_discs):
+  # 生成公式
+  do generate_hanoi_formula(num_discs)
+
+  # 烹制成 protomolecule
+  do cook_formula("hanoi-{num_discs}")
+
+  # 实例化为工作分子
+  let hanoi_mol = do instantiate_molecule(
+    "hanoi-{num_discs}",
+    {"discs": num_discs}
+  )
+
+  # 创建 convoy 来跟踪
+  do create_convoy("hanoi-{num_discs}-demo", hanoi_mol)
+
+  # 抛给一个 polecat（顺序工作的单个工人）
+  do sling_work(hanoi_mol, "polecat-hanoi")
+
+  # polecat 将完成所有步骤
+  # 崩溃没关系 - NDI 确保最终完成
+  session: mayor
+    prompt: """
+为 {num_discs} 个盘子启动 Hanoi convoy。
+- 步骤: 2^{num_discs} - 1
+- 估计完成时间: 根据盘子数量变化
+- Polecat 将在分子中检查点进度
+- 通过活动流监控
+"""
+
+# =============================================================================
+# 示例：完整生产工作流
+# =============================================================================
+
+# 这展示了一个使用所有 Gas Town 功能的现实生产工作流
+
+block production_feature_workflow(feature_name, rig_name):
+  # 阶段 1：与 Crew 进行设计（第一次调用）
+  do log_activity("overseer", "feature_start", feature_name)
+
+  let design = session: crew
+    prompt: """
+设计阶段：{feature_name}
+1. 理解需求
+2. 研究现有代码
+3. 提出架构
+4. 获取监督者批准
+"""
+
+  # 阶段 2：创建 chrome 级别质量的 convoy（第一次 Mayor 调用）
+  let plan = session: mayor
+    prompt: """
+为 {feature_name} 创建实施计划：
+1. 分解为可实施的 beads
+2. 添加依赖关系
+3. 选择 chrome 工作流（最高质量）
+4. 估计 polecat 数量
+"""
+    context: design
+
+  do create_convoy("{feature_name}-impl", plan)
+
+  # 阶段 3：使用 chrome 工作流生成群集
+  resume: mayor
+    prompt: """
+生成 chrome 质量群集：
+1. 分配 polecats（使用 CV 中的信任评分）
+2. 为每个 bead 分配 chrome 工作流
+3. 通知 Witness
+"""
+    context: plan
+
+  # 阶段 4：监控进度（巡逻处理其余部分）
+  loop until **所有 beads 完成** (max: 100):
+    do check_swarm_health("{feature_name}-impl")
+
+    if **任何 polecats 卡住**:
+      resume: witness
+        prompt: "轻推卡住的 polecats，如果需要使用 seance"
+
+    if **任何 polecats 接近上下文限制**:
+      resume: witness
+        prompt: "回收耗尽的 polecats"
+
+  # 阶段 5：合并所有 MRs
+  loop until **所有 MRs 已合并** (max: 50):
+    do refinery_patrol(rig_name)
+
+  # 阶段 6：着陆并庆祝
+  do land_convoy("{feature_name}-impl")
+
+  resume: mayor
+    prompt: """
+功能 {feature_name} 完成！
+1. 生成发布说明
+2. 更新文档
+3. 通知监督者
+4. 记录所有 polecats 的 CV 完成
+"""
+
+# =============================================================================
+# 示例：跨 Rig Convoy（战争 Rigs）
+# =============================================================================
+
+# 当一个功能跨越多个项目时
+
+block cross_rig_convoy(feature_name, rig_list):
+  # 创建跨越多个 rigs 的 convoy（第一次 Mayor 调用）
+  session: mayor
+    prompt: """
+为 {feature_name} 的跨 rig convoy：
+涉及的 rigs: {rig_list}
+
+1. 识别每个 rig 的工作（战争 Rigs）
+2. 在每个 rig 的数据库中创建 beads
+3. 通过跨 rig 依赖关系链接
+4. 跨 rigs 协调 witnesses
+"""
+
+  # 为每个 rig 生成 witnesses
+  parallel for rig in rig_list:
+    session: witness
+      prompt: "为 convoy {feature_name} 中的 {rig} 初始化战争 Rig 监控"
+
+  # 并行群集所有 rigs
+  parallel for rig in rig_list:
+    do spawn_swarm("{feature_name}", "war-rig-{rig}-beads", 10)
+
+  # 监控战争 Rig 贡献
+  loop until **所有战争 Rigs 完成** (max: 200):
+    parallel for rig in rig_list:
+      do war_rig_status(rig, "{feature_name}")
+
+    if **任何战争 Rig 被阻塞**:
+      resume: mayor
+        prompt: "协调跨 rig 阻塞器解决"
+
+  # 着陆跨 rig convoy
+  do land_convoy("{feature_name}")
+
+  resume: mayor
+    prompt: """
+跨 rig convoy {feature_name} 已着陆！
+每个 rig 的战争 Rig 摘要：{rig_list}
+"""
+
+# =============================================================================
+# GAS TOWN 状态仪表板
+# =============================================================================
+
+block gt_status:
+  parallel:
+    town_health = session "检查城镇健康状况"
+      prompt: """
+城镇级别状态：
+- Deacon 巡逻状态
+- Dogs 状态
+- 活动 convoys（城镇级别）
+"""
+
+    rig_health = session "检查 rig 健康状况"
+      prompt: """
+每个 rig 状态：
+- 读取 .prose/gas-town/rigs/
+- 对于每个 rig：polecats、MQ 深度、witnesses
+"""
+
+    activity = do get_activity_feed("last_hour", "")
+
+  session: mayor
+    prompt: """
+Gas Town 状态报告：
+
+城镇：
+{town_health}
+
+RIGS：
+{rig_health}
+
+最近活动：
+{activity}
+
+建议：
+- 有任何工人需要关注吗？
+- 有任何 convoy 被阻塞吗？
+- 资源利用率如何？
+"""
+    context: { town_health, rig_health, activity }
+
+# =============================================================================
+# 运行示例（已注释 - 取消注释以执行）
+# =============================================================================
+
+# 基础示例：
+# do example_convoy
+# do crew_design_session("API 重新设计 v2")
+
+# 高级示例：
+# do run_hanoi_demo(10)  # 约 1000 步，几分钟内运行
+# do production_feature_workflow("user-auth", "main-app")
+# do cross_rig_convoy("unified-search", ["frontend", "backend", "search-service"])
+# do gt_status

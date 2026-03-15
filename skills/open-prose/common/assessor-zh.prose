@@ -1,0 +1,294 @@
+# 评估者 (Assessor)
+# 评估程序和产出 — 衡量星座 (Constellation) 中的价值
+#
+# 评估者通过审查程序和执行产出来估算其价值。
+# 这值多少钱？谁会受益？它节省了多少工作量？
+# 这使得整个生态系统能够进行经济推理。
+#
+# 价值是主观的，但评估使其变得可讨论。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input target: "评估对象：'@handle/slug' (程序)、执行 ID 或 'recent' (近期执行)"
+input valuation_type: "评估价值的类型：'utility' (实用性)、'quality' (质量)、'market' (市场价值)、'all' (全部)"
+input context: "可选上下文：谁是预期用户？它解决了什么问题？"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 价值评估框架 (Valuation Framework) ---
+
+const VALUATION_FRAMEWORK = """
+实用价值 (UTILITY VALUE) —— 它是否有用？:
+- 解决的问题：它解决了什么痛点？
+- 节省的时间：避免了多少小时的手动工作？
+- 开启的能力：你现在能做哪些以前不能做的事？
+- 可重用性：是一次性价值还是重复价值？
+- 影响范围：个人、团队还是整个生态系统受益？
+
+质量价值 (QUALITY VALUE) —— 它做得有多好？:
+- 工艺水平：结构、优雅度、清晰度
+- 可靠性：运行是否稳定一致？
+- 可维护性：是否易于理解和修改？
+- 文档：他人是否易于上手？
+- 创新性：是新颖的方法还是标准解决方案？
+
+市场价值 (MARKET VALUE) —— 人们愿意付多少钱？:
+- 可替代方案：还有什么能解决这个问题？
+- 复制成本：自己构建一个同等功能的有多难？
+- 需求信号：谁想要这个？有多少人？
+- 竞争优势：是独特的还是大众化的？
+- 切换成本：是捆绑式的还是可移植的？
+
+成本因素:
+- 每次执行消耗的信用点 (Credits)
+- 投入的开发精力
+- 维护负担
+- 依赖风险
+
+价值乘数:
+- 网络效应 (使用的人越多越有价值)
+- 可组合性 (能作为其他程序的基础)
+- 作者的信任度/声誉
+- 及时性 (解决当前需求)
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent fetcher:
+  model: haiku
+  prompt: """
+    你是获取者 (Fetcher) — 负责检索待评估的项目。
+
+    API: {CONSTELLATION_API}
+
+    对于程序 (@handle/slug):
+    ```bash
+    curl -s "{CONSTELLATION_API}/programs/@{handle}/{slug}"
+    curl -s "{CONSTELLATION_API}/programs/@{handle}/{slug}/raw"
+    ```
+
+    对于执行 ID:
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/{id}/public"
+    ```
+
+    对于近期执行:
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=20"
+    ```
+
+    返回：{ items: [{ type, id, source/preview, metadata }] }
+  """
+
+agent analyst:
+  model: haiku
+  prompt: """
+    你是分析师 (Analyst) — 负责审查项目以理解其本质。
+
+    对于每个项目，确定：
+    - 它做什么？(目的、功能)
+    - 它是为谁准备的？(目标用户、用例)
+    - 它是如何工作的？(方法、依赖)
+    - 它产出什么？(输出、制品)
+    - 它的成本是多少？(复杂度、资源)
+
+    要详尽。价值评估建立在理解之上。
+
+    返回：{ analysis: { purpose, audience, mechanism, outputs, costs } }
+  """
+
+agent appraiser:
+  model: haiku
+  prompt: """
+    你是估价师 (Appraiser) — 负责使用框架估算价值。
+
+    框架：
+    {VALUATION_FRAMEWORK}
+
+    针对所请求的每种评估类型：
+
+    实用性 (UTILITY) 评估：
+    - 问题重要性 (1-10)
+    - 解决方案有效性 (1-10)
+    - 节省的时间/精力 (估算小时数)
+    - 可重用性因素 (一次性、偶尔、频繁、持续)
+    - 触达范围 (个人、团队、社区、生态系统)
+
+    质量 (QUALITY) 评估：
+    - 工艺得分 (1-10)
+    - 可靠性得分 (1-10)
+    - 可维护性得分 (1-10)
+    - 文档得分 (1-10)
+    - 创新得分 (1-10)
+
+    市场 (MARKET) 评估：
+    - 可替代方案 (列表)
+    - 复制工作量 (构建等效功能所需的小时数)
+    - 需求估算 (低/中/高)
+    - 价格点估算 (用户愿意支付多少？)
+    - 竞争地位 (独特/差异化/大众化)
+
+    用具体观察结果来论证每个得分。
+
+    返回：{ valuations: {...}, justifications: {...} }
+  """
+
+agent synthesizer:
+  model: haiku
+  prompt: """
+    你是综合员 (Synthesizer) — 负责将各项评估结合成最终估值。
+
+    根据分析和估价：
+
+    1. 计算综合得分：
+       - 实用性得分 (0-100)
+       - 质量得分 (0-100)
+       - 市场得分 (0-100)
+       - 整体价值得分 (加权平均)
+
+    2. 确定价值层级：
+       - 出类拔萃 (Exceptional, 90+): 罕见、高影响力
+       - 极具价值 (Valuable, 70-89): 扎实、值得使用
+       - 表现平平 (Moderate, 50-69): 有优点、视情况而定
+       - 价值有限 (Limited, 30-49): 小众或有缺陷
+       - 价值微小 (Minimal, <30): 目前形态下几乎没有价值
+
+    3. 估算经济价值：
+       - 单次使用价值 (执行一次值多少钱？)
+       - 累计价值 (如果使用 N 次)
+       - 开发成本等效值 (构建所需的小时数)
+
+    4. 识别价值驱动因素：
+       - 是什么让它有价值？
+       - 是什么限制了它的价值？
+       - 如何增加其价值？
+
+    返回全面的估值摘要。
+  """
+
+agent reporter:
+  model: haiku
+  prompt: """
+    你是报告员 (Reporter) — 负责清晰地格式化估值结果。
+
+    格式化评估报告：
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  评估者估值报告 (ASSESSOR VALUATION)                      ║
+    ║  评估对象：{target}                                       ║
+    ║  日期：{timestamp}                                        ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    摘要
+    ───────
+    整体价值：{tier} ({score}/100)
+
+    ┌─────────────┬───────┐
+    │ 实用性 (Utility) │ {}/100│
+    │ 质量 (Quality)   │ {}/100│
+    │ 市场 (Market)    │ {}/100│
+    └─────────────┴───────┘
+
+    核心功能
+    ────────────
+    {目的与功能描述}
+
+    价值驱动因素
+    ─────────────
+    ✓ {正面因素 1}
+    ✓ {正面因素 2}
+
+    价值限制因素
+    ──────────────
+    ✗ {限制因素 1}
+    ✗ {限制因素 2}
+
+    经济估算
+    ─────────────────
+    单次使用价值：约 {estimate}
+    构建等效成本：约 {hours} 小时
+
+    改进建议
+    ───────────────
+    {如何提升价值}
+
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，评估者无法运行"
+
+  output access = passage
+
+block fetch_targets():
+  output items = session: fetcher
+    prompt: "获取待评估项目"
+    context: target
+
+block analyze_item(item):
+  output analysis = session: analyst
+    prompt: "深入分析此项目"
+    context: { item, context }
+
+block appraise_item(item, analysis):
+  output appraisal = session: appraiser
+    prompt: "评估此项目的价值"
+    context: { item, analysis, VALUATION_FRAMEWORK, valuation_type }
+
+block synthesize_valuation(analysis, appraisal):
+  output valuation = session: synthesizer
+    prompt: "综合得出最终估值"
+    context: { analysis, appraisal, valuation_type }
+
+block format_report(valuation, item):
+  output report = session: reporter
+    prompt: "格式化估值报告"
+    context: { valuation, item, target }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 获取项目
+let items = do fetch_targets()
+
+# 评估每个项目
+let assessments = []
+
+for item in items.items:
+  let analysis = do analyze_item(item)
+  let appraisal = do appraise_item(item, analysis)
+  let valuation = do synthesize_valuation(analysis, appraisal)
+  let report = do format_report(valuation, item)
+
+  assessments = assessments + [{ item, valuation, report }]
+
+# 编译最终输出
+output assessment_reports = session "编译评估报告"
+  prompt: """
+    编译所有评估报告。
+    如果有多个项目，请包含对比摘要。
+    按整体价值得分排名。
+  """
+  context: assessments

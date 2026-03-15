@@ -1,0 +1,42 @@
+# RLM: 自我精炼 (Self-Refinement)
+# 递归改进直到达到质量阈值
+#
+# [备注]：这是递归语言模型 (Recursive Language Model, RLM) 的核心模式。
+# OpenProse 关键字（如 session, agent, block, let, output 等）保持不变。
+
+input artifact: "要精炼的产出物 (artifact)"
+input criteria: "质量标准"
+
+agent evaluator:
+  model: sonnet
+  prompt: "根据标准打分 (0-100)。列出具体问题。"
+
+agent refiner:
+  model: opus
+  prompt: "进行有针对性的改进。保留有效的部分。"
+
+# 定义递归块
+block refine(content, depth):
+  # 基础情况：达到最大递归深度
+  if depth <= 0:
+    output content
+
+  # 阶段 1：评估
+  let eval = session: evaluator
+    prompt: "根据以下标准进行评估：{criteria}"
+    context: content
+
+  # 阶段 2：检查是否满足标准（AI 智能判断）
+  if **评分分数 >= 85**:
+    output content
+
+  # 阶段 3：精炼
+  let improved = session: refiner
+    prompt: "修复已识别的问题"
+    context: { artifact: content, evaluation: eval }
+
+  # 递归调用
+  output do refine(improved, depth - 1)
+
+# 启动精炼流程，最大深度为 5
+output result = do refine(artifact, 5)

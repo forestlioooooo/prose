@@ -1,0 +1,246 @@
+# 虚拟机改进器 (VM Improver)
+# 分析检查报告并对 OpenProse 虚拟机 (VM) 提出改进建议
+#
+# 用法:
+#   prose run @openprose/lib/vm-improver
+#
+# 输入:
+#   inspection_path: 检查绑定的路径 (例如: .prose/runs/.../bindings/inspection.md)
+#   prose_repo: prose 子模块的路径（默认: 当前项目的 prose/）
+#
+# 输出: 向 prose 仓库提交一个或多个 PR，如果没有 git 访问权限则生成建议文件
+#
+# 备注: 
+# 此工具专门针对 OpenProse 虚拟机本身的性能、状态管理和规范改进。
+
+input inspection_path: "检查结果路径 (例如: bindings/inspection.md)"
+input prose_repo: "prose 技能目录路径 (例如: prose/skills/open-prose)"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent analyst:
+  model: opus
+  prompt: """
+    你负责从 OpenProse 检查报告中分析虚拟机 (VM) 改进机会。
+
+    寻找以下证据：
+    - 执行效率低下（步骤过多、冗余产生的会话）
+    - 上下文 (context) 臃肿（VM 传递了完整数值而非引用）
+    - 状态管理问题（缺失绑定、路径错误）
+    - 错误处理漏洞（未捕获的失败、不清晰的错误信息）
+    - 有助于此类程序的缺失功能
+    - 导致执行错误的规范 (spec) 模糊之处
+
+    要具体。引用检查报告中的具体发现。
+  """
+
+agent researcher:
+  model: sonnet
+  prompt: """
+    你负责探索 OpenProse 虚拟机代码库，以了解如何修复问题。
+    阅读文件，理解结构，找到正确的更改位置。
+  """
+
+agent implementer:
+  model: opus
+  prompt: """
+    你负责改进 OpenProse 虚拟机。
+
+    规则：
+    - 严格遵循现有的代码风格
+    - 进行最小限度的、有针对性的更改
+    - 每个 PR 仅包含一个逻辑更改
+    - 更新所有受影响的文件（规范 spec、状态后端等）
+  """
+
+agent pr_author:
+  model: sonnet
+  prompt: """
+    你负责创建带有清晰描述的分支和拉取请求 (PR)。
+    解释问题、解决方案以及如何进行测试。
+  """
+
+# ============================================================
+# 阶段 1: 分析检查报告中的虚拟机问题
+# ============================================================
+
+let analysis = session: analyst
+  prompt: """
+    阅读检查报告并识别虚拟机 (VM) 改进机会。
+
+    检查报告: {inspection_path}
+
+    针对每个机会，明确：
+    - category (类别): efficiency | context | state | error | feature | spec
+    - description (描述): 哪里有问题
+    - severity (严重程度): low | medium | high
+    - evidence (证据): 检查报告中显示这一点的引文
+    - hypothesis (假设): 哪种虚拟机行为可能导致了该问题
+
+    返回 JSON:
+    {
+      "target_run": "被检查的运行记录 ID",
+      "opportunities": [...],
+      "priority_order": [按影响排序的索引列表]
+    }
+
+    如果检查报告显示执行过程整洁且无问题，则返回空的 opportunities (机会列表)。
+  """
+  context: inspection_path
+
+if **没有发现可采取行动的机会**:
+  output result = {
+    status: "no-improvements-needed",
+    analysis: analysis,
+    message: "检查结果显示虚拟机执行过程整洁无误"
+  }
+
+# ============================================================
+# 阶段 2: 研究虚拟机代码库
+# ============================================================
+
+let research = session: researcher
+  prompt: """
+    针对每个改进机会，寻找相关的虚拟机代码。
+
+    Prose 仓库路径: {prose_repo}
+    改进机会列表: {analysis.opportunities}
+
+    要检查的关键文件：
+    - prose.md (主虚拟机规范)
+    - state/filesystem.md, state/sqlite.md, state/postgres.md
+    - primitives/session.md
+    - compiler.md
+    - SKILL.md
+
+    返回 JSON:
+    {
+      "findings": [
+        {
+          "opportunity_index": N,
+          "relevant_files": ["相关文件路径/file.md"],
+          "current_behavior": "目前的运行方式",
+          "change_location": "特定的章节或行号范围"
+        }
+      ]
+    }
+  """
+  context: { analysis, prose_repo }
+
+# ============================================================
+# 阶段 3: 用户选择
+# ============================================================
+
+input selection: """
+  ## 虚拟机改进机会 (VM Improvement Opportunities)
+
+  基于对以下记录的检查：{analysis.target_run}
+
+  ### 发现的机会：
+  {analysis.opportunities}
+
+  ### 研究结果：
+  {research.findings}
+
+  ---
+
+  我应该以 PR 形式实施哪些改进？
+  - 请列出编号 (例如: "1, 3")
+  - 或者输入 "all" 以执行全部改进
+  - 或者输入 "none" 以跳过
+"""
+
+if **用户选择 none (无) 或想要跳过**:
+  output result = {
+    status: "skipped",
+    analysis: analysis,
+    research: research
+  }
+
+let selected = session "解析用户选择"
+  prompt: "从用户输入中提取被选中的机会索引列表"
+  context: { selection, analysis }
+
+# ============================================================
+# 阶段 4: 执行更改
+# ============================================================
+
+let implementations = selected | map:
+  session: implementer
+    prompt: """
+      实施此项虚拟机改进。
+
+      机会: {analysis.opportunities[item]}
+      研究结果: {research.findings[item]}
+      Prose 仓库路径: {prose_repo}
+
+      1. 阅读当前文件的内容
+      2. 设计最小限度的更改
+      3. 编写改进后的内容
+
+      返回 JSON:
+      {
+        "opportunity_index": N,
+        "branch_name": "vm/简短描述",
+        "title": "PR 标题",
+        "files": [
+          {
+            "path": "相对路径.md",
+            "action": "modify" (修改),
+            "description": "更改了什么"
+          }
+        ],
+        "summary": "2-3 句话的解释"
+      }
+
+      实际上请将更改写入文件。
+    """
+    context: item
+    permissions:
+      read: ["{prose_repo}/**"]
+      write: ["{prose_repo}/**"]
+
+# ============================================================
+# 阶段 5: 创建 PR
+# ============================================================
+
+let prs = implementations | map:
+  session: pr_author
+    prompt: """
+      为此虚拟机改进创建一个 PR。
+
+      实施方案: {item}
+      Prose 仓库路径: {prose_repo}
+
+      步骤：
+      1. cd 进入 prose 仓库
+      2. 创建分支: {item.branch_name}
+      3. 暂存更改的文件
+      4. 提交并附带清晰的提交消息
+      5. 推送分支
+      6. 通过 gh cli 创建 PR
+
+      PR 的正文应包含：
+      - 问题：检查报告显示了什么
+      - 解决方案：本次更改了什么
+      - 测试：如何验证
+
+      返回: { pr_url, branch, title }
+    """
+    context: item
+    permissions:
+      bash: allow
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output result = {
+  status: "complete",
+  target_run: analysis.target_run,
+  opportunities_found: analysis.opportunities,
+  opportunities_implemented: implementations,
+  prs_created: prs
+}

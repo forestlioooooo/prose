@@ -1,0 +1,196 @@
+# 运行后检查器 (Post-Run Inspector)
+# 分析已完成的 .prose 运行记录，以评估运行时忠实度 (fidelity) 和任务有效性 (effectiveness)
+#
+# 用法:
+#   prose run @openprose/lib/inspector
+#
+# 输入:
+#   run_path: 要检查的运行记录路径 (例如: .prose/runs/20260119-100000-abc123)
+#   depth: light (轻量) | deep (深度)
+#   target: vm (虚拟机) | task (任务) | all (全部)
+#
+# 复合分析：每次检查通过持久化的 index 代理在之前的检查基础上进行。
+# 索引代理 (index agent) 使用 `persist: user`，因此检查历史记录可以跨项目存在。
+
+input run_path: "要检查的运行记录路径 (例如: .prose/runs/20260119-100000-abc123)"
+input depth: "检查深度: light (轻量) 或 deep (深度)"
+input target: "评估目标: vm (虚拟机), task (任务), 或 all (全部)"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent index:
+  model: haiku
+  persist: user
+  prompt: """
+    你负责维护所有项目的检查注册表。
+    跟踪内容：target_run_id (目标运行ID), depth (深度), target (目标), timestamp (时间戳), verdict (裁决结果)。
+    查询时返回 JSON。存储要紧凑。
+  """
+
+agent extractor:
+  model: sonnet
+  prompt: """
+    你负责从 .prose 运行工件中提取结构化数据。
+    仔细阅读 state.md, bindings/ 和日志。
+    返回整洁的 JSON。
+  """
+
+agent evaluator:
+  model: opus
+  prompt: """
+    你负责以智能判断力评估 .prose 运行记录。
+    为各项打分 1-10 并给出具体理由。要具体。
+  """
+
+agent synthesizer:
+  model: sonnet
+  prompt: """
+    你负责以要求的格式生成清晰的报告。
+  """
+
+# ============================================================
+# 阶段 0: 检查先前工作
+# ============================================================
+
+let prior = resume: index
+  prompt: """
+    是否有针对以下记录的先前检查：{run_path}?
+    返回 JSON: { "inspections": [...], "has_light": bool, "has_deep": bool }
+  """
+
+# ============================================================
+# 阶段 1: 提取 (Extraction)
+# ============================================================
+
+let extraction = session: extractor
+  prompt: """
+    从以下路径提取运行记录数据：{run_path}
+    检查深度: {depth}
+    先前工作: {prior}
+
+    始终提取：
+    - run_id（从路径获取）
+    - completed（state.md 是否显示已完成？）
+    - error_count（state.md 中的失败次数）
+    - binding_names（列出 bindings/ 目录下的所有绑定）
+    - output_names（kind 为 output 的绑定）
+
+    如果 depth=deep (深度) 且没有先前的深度检查：
+    - program_source（program.prose 的内容）
+    - execution_summary（state.md 中的关键语句）
+    - binding_previews（每个绑定的前 300 个字符）
+
+    如果已存在先前的深度检查，则跳过深度提取并注明 "using cached" (使用缓存)。
+
+    返回 JSON。
+  """
+  context: prior
+
+# ============================================================
+# 阶段 2: 评估 (Evaluation)
+# ============================================================
+
+let evaluation = session: evaluator
+  prompt: """
+    评估此运行记录。
+
+    评估目标: {target}
+    检查深度: {depth}
+    数据: {extraction}
+    先前发现: {prior}
+
+    针对虚拟机 vm (如果 target 为 vm 或 all):
+    - completion (1-10)：是否干净利落地完成？
+    - binding_integrity (1-10)：预期的输出是否存在且包含内容？
+    - vm_verdict：pass (通过) / partial (部分通过) / fail (失败)
+    - vm_notes：1-2 句话的总结
+
+    针对任务 task (如果 target 为 task 或 all):
+    - output_substance (1-10)：输出内容是否充实，而非空内容或仅包含错误？
+    - goal_alignment (1-10)：根据程序名称判断，输出是否符合目标？
+    - task_verdict：pass (通过) / partial (部分通过) / fail (失败)
+    - task_notes：1-2 句话的总结
+
+    如果 depth=deep (深度)，额外增加：
+    - fidelity (1-10)：执行追踪 trace 是否符合程序结构？
+    - efficiency (1-10)：执行步骤数量对于该任务是否合理？
+
+    返回包含所有适用字段的 JSON。
+  """
+  context: extraction
+
+# ============================================================
+# 阶段 3: 综合 (Synthesis)
+# ============================================================
+
+parallel:
+  verdict = session: synthesizer
+    prompt: """
+      以 JSON 格式生成机器可读的裁决结果：
+      {
+        "run_id": "...",
+        "depth": "{depth}",
+        "target": "{target}",
+        "vm": { "verdict": "...", "scores": {...} },
+        "task": { "verdict": "...", "scores": {...} },
+        "flags": []
+      }
+
+      数据: {evaluation}
+    """
+    context: evaluation
+
+  diagram = session: synthesizer
+    prompt: """
+      生成该运行记录的简单 Mermaid 流程图。
+      显示：输入 -> 关键步骤 -> 输出。
+      如有 execution_summary，请使用它，否则根据 bindings (绑定) 进行推断。
+      仅输出 Mermaid 代码。
+
+      数据: {extraction}
+    """
+    context: extraction
+
+  report = session: synthesizer
+    prompt: """
+      生成两段式的 Markdown 摘要：
+      1. 检查了什么内容，关键指标是什么
+      2. 发现及任何建议
+
+      数据: {extraction}, {evaluation}
+    """
+    context: { extraction, evaluation }
+
+# ============================================================
+# 阶段 4: 注册
+# ============================================================
+
+resume: index
+  prompt: """
+    注册本次检查：
+    运行路径: {run_path}
+    检查深度: {depth}
+    评估目标: {target}
+    裁决结果: {verdict}
+
+    将此条目更新到你的内存中。
+  """
+  context: verdict
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output inspection = session: synthesizer
+  prompt: """
+    组合成最终输出结构：
+
+    verdict_json (裁决JSON): {verdict}
+    mermaid (流程图): {diagram}
+    summary (摘要): {report}
+
+    返回包含这三个字段的 JSON。
+  """
+  context: { verdict, diagram, report }

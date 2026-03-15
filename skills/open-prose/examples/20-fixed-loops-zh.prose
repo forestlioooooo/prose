@@ -1,0 +1,26 @@
+# 示例：OpenProse 中的固定循环
+# 演示 repeat、for-each 和 parallel for-each 模式
+
+# Repeat 块 - 生成多个想法
+# 备注：repeat 关键字用于执行固定次数的迭代
+# 适用于需要生成多个备选方案的场景，如头脑风暴
+repeat 3:
+  session "生成一个创意应用想法"
+
+# For-each 块 - 遍历集合
+# 备注：for 循环允许迭代数组或列表中的每个元素
+# context 字段将当前元素传递给会话，实现参数化执行
+let features = ["authentication", "dashboard", "notifications"]
+for feature in features:
+  session "设计此功能的用户界面"
+    context: feature
+
+# Parallel for-each - 并行研究
+# 备注：parallel for 结合了并行执行和迭代遍历
+# 这显著提高了处理多个独立任务时的效率
+let topics = ["market size", "competitors", "technology stack"]
+parallel for topic in topics:
+  session "研究创业想法的这个方面"
+    context: topic
+
+session "将所有研究综合成商业计划"

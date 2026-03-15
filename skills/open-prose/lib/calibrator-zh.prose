@@ -1,0 +1,219 @@
+# 校准器 (Calibrator)
+# 验证轻量级评估 (lightweight evaluations) 是否可以作为深度评估 (deep evaluations) 的可靠替代方案
+#
+# 用法:
+#   prose run @openprose/lib/calibrator
+#
+# 目的:
+#   对相同的运行记录 (runs) 同时执行轻量级和深度检查，比较结果，
+#   并建立对轻量级评估的信心（或识别其中的差距）。
+#
+# 输入:
+#   run_paths: 要校准的运行记录路径（逗号分隔或 glob 模式）
+#   sample_size: 要采样的运行记录数量（如果可用数量较多）
+#
+# 输出:
+#   - 轻量级与深度评估之间的一致性比率
+#   - 它们不一致的情况
+#   - 改进轻量级评估的建议
+#
+# 备注: 
+# OpenProse 的评估通常分为 light (轻量) 和 deep (深度) 两种深度。
+# 轻量评估速度快、成本低，而深度评估更全面。此工具确保两者结论一致。
+
+input run_paths: "运行记录路径（逗号分隔，或使用 'recent' 获取最新记录）"
+input sample_size: "最大分析运行记录数（默认: 10）"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent sampler:
+  model: sonnet
+  prompt: """
+    你负责选择用于校准分析的运行记录 (runs)。
+    优先选择多样化的运行记录：不同的程序、结果和规模。
+  """
+
+agent comparator:
+  model: opus
+  prompt: """
+    你负责细致地比较轻量级与深度评估的结果。
+    识别一致、不一致的情况以及边缘案例 (edge cases)。
+  """
+
+agent statistician:
+  model: sonnet
+  prompt: """
+    你负责计算统计数据和置信区间。
+  """
+
+agent advisor:
+  model: opus
+  prompt: """
+    你负责根据分析结果推荐评估标准的改进措施。
+  """
+
+# ============================================================
+# 阶段 1: 选择运行记录
+# ============================================================
+
+let selected_runs = session: sampler
+  prompt: """
+    选择用于校准的运行记录。
+
+    输入: {run_paths}
+    样本大小: {sample_size}
+
+    如果 run_paths 为 "recent"，在 .prose/runs/ 中查找最近的运行记录。
+    如果是特定路径，则使用这些路径。
+
+    选择多样化的样本：
+    - 尽可能包含不同的程序
+    - 混合包含成功、部分成功或失败的记录
+    - 不同的规模（小型与大型运行记录）
+
+    返回运行记录路径列表。
+  """
+
+# ============================================================
+# 阶段 2: 执行两种深度的检查
+# ============================================================
+
+let calibration_data = selected_runs | map:
+  # 对每个记录依次运行轻量级和深度检查（不能在同一记录上并行运行）
+  let light = session "轻量级检查"
+    prompt: """
+      对以下记录运行轻量级 (LIGHT) 检查：{item}
+
+      快速评估：
+      - completion (完成度)：是否干净利落地结束？
+      - binding_integrity (绑定完整性)：预期的输出是否存在？
+      - output_substance (输出实质)：输出是否包含实际内容？
+      - goal_alignment (目标一致性)：输出是否符合程序目的？
+
+      为每项打分 1-10，并给出裁决结果 (verdict) (通过/部分通过/失败)。
+      返回 JSON 格式。
+    """
+
+  let deep = session "深度检查"
+    prompt: """
+      对以下记录运行深度 (DEEP) 检查：{item}
+
+      彻底评估：
+      - 阅读完整的程序源代码
+      - 逐步跟踪执行过程
+      - 检查每个绑定 (binding) 的内容
+      - 详细评估输出质量
+      - 评估忠实度 (fidelity)（虚拟机是否正确遵循了程序？）
+      - 评估效率 (efficiency)（执行步骤是否合理？）
+
+      为每个维度打分 1-10，并给出裁决结果。
+      返回 JSON 格式。
+    """
+    context: light  # 深度检查可以查看轻量级检查的评估结果
+
+  session "打包结果"
+    prompt: """
+      打包轻量级和深度检查的结果。
+
+      运行记录: {item}
+      轻量级: {light}
+      深度: {deep}
+
+      返回格式:
+      {
+        "run_path": "...",
+        "light": { verdicts, scores },
+        "deep": { verdicts, scores },
+        "agreement": {
+          "vm_verdict": true/false,
+          "task_verdict": true/false,
+          "score_delta": { ... }
+        }
+      }
+    """
+    context: { light, deep }
+
+# ============================================================
+# 阶段 3: 统计分析
+# ============================================================
+
+let statistics = session: statistician
+  prompt: """
+    计算校准统计数据。
+
+    数据: {calibration_data}
+
+    计算：
+    - 总体一致率（轻量级和深度评估结论一致的频率）
+    - 按裁决类型划分的一致性（虚拟机 vm 与 任务 task）
+    - 评分相关性（轻量级评分是否能预测深度评分？）
+    - 不一致模式（它们在什么时候出现分歧？）
+
+    返回格式:
+    {
+      "sample_size": N,
+      "agreement_rate": { overall, vm, task },
+      "score_correlation": { ... },
+      "disagreements": [ { run, light_said, deep_said, reason } ],
+      "confidence": "high" | "medium" | "low"
+    }
+  """
+  context: calibration_data
+
+# ============================================================
+# 阶段 4: 建议
+# ============================================================
+
+let recommendations = session: advisor
+  prompt: """
+    根据校准结果推荐改进建议。
+
+    统计数据: {statistics}
+    原始数据: {calibration_data}
+
+    如果一致性很高 (>90%):
+    - 轻量级评估是可靠的
+    - 记录任何需要注意的边缘案例
+
+    如果一致性中等 (70-90%):
+    - 识别不一致情况中的模式
+    - 建议调整评估标准
+
+    如果一致性较低 (<70%):
+    - 轻量级评估需要改进
+    - 提供具体的改进建议
+
+    返回格式:
+    {
+      "reliability_verdict": "reliable" (可靠) | "mostly_reliable" (基本可靠) | "needs_work" (需要改进),
+      "key_findings": [...],
+      "recommendations": [
+        { "priority": 1, "action": "...", "rationale": "..." }
+      ]
+    }
+  """
+  context: { statistics, calibration_data }
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output report = session "格式化报告"
+  prompt: """
+    将校准结果格式化为报告。
+
+    统计数据: {statistics}
+    建议: {recommendations}
+
+    包含内容：
+    1. 摘要：轻量级评估是否可靠？
+    2. 一致率（表格形式）
+    3. 不一致案例（如有）
+    4. 建议
+    5. 对这些结果的置信度水平
+
+    使用 Markdown 格式。
+  """
+  context: { statistics, recommendations, calibration_data }

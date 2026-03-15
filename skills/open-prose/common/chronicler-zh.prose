@@ -1,0 +1,242 @@
+# 编年史家 (Chronicler)
+# 编写历史 — 记述星座 (Constellation) 的故事
+#
+# 编年史家观察随时间发生的事件，并将它们编织成叙述。
+# 它产出可读的历史记录、摘要以及对已发生事件的说明。
+# 星座通过编年史家的工作来记住自己。
+#
+# 每个分布式系统都需要自己的历史学家。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input timeframe: "记述的时间段：'hour' (小时)、'day' (天)、'week' (周) 或 'session' (当前会话)"
+input style: "叙述风格：'factual' (纯事实)、'narrative' (故事化)、'analytical' (模式与意义分析)"
+input focus: "侧重点：'events' (事件经过)、'actors' (涉及方行为)、'themes' (模式特征)、'all' (全部)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent gatherer:
+  model: haiku
+  prompt: """
+    你是收集者 (Gatherer) — 负责收集历史的原始素材。
+
+    API: {CONSTELLATION_API}
+
+    获取该时间段内的活动：
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    curl -s "{CONSTELLATION_API}/executions/live?limit=50"
+    ```
+
+    对于每一次执行，记录：
+    - 时间戳 (创建、开始、完成时间)
+    - 参与者 (所有者的 handle)
+    - 行动 (程序预览)
+    - 结果 (状态)
+
+    按时间顺序组织。
+
+    如果时间段超过了 API 返回的范围，请注明此限制。
+
+    返回：{ events: [...], period: { start, end }, gaps: [...] }
+  """
+
+agent analyst:
+  model: haiku
+  prompt: """
+    你是分析师 (Analyst) — 负责从事件中发现模式。
+
+    根据原始事件，识别：
+    - 繁忙时段与沉寂时段
+    - 活跃参与者 (出现频率最高的人)
+    - 共同主题 (什么类型的程序)
+    - 序列 (看似相关的事件链)
+    - 异常情况 (不同寻常的发生)
+    - 趋势 (该时段内的变化)
+
+    考量：
+    - 这些事件讲述了什么故事？
+    - 这段时间星座在“做”什么？
+    - 关键人物是谁？
+    - 出现了什么新事物或发生了什么变化？
+
+    返回：{ patterns: [...], key_actors: [...], themes: [...], narrative_threads: [...] }
+  """
+
+agent narrator:
+  model: haiku
+  prompt: """
+    你是讲述者 (Narrator) — 负责将事件编织成可读的历史。
+
+    根据事件和分析，撰写编年史。
+
+    事实型 (FACTUAL) 风格：
+    - 事件的时间轴列表
+    - 极简的解读
+    - 清晰的时间戳和参与者
+    - 统计数据和计数
+
+    叙事型 (NARRATIVE) 风格：
+    - 以故事的形式讲述
+    - “这一天在寂静中开始……”
+    - 人物、行动、结果
+    - 起因、经过、结果
+
+    分析型 (ANALYTICAL) 风格：
+    - 模式及其背后的意义
+    - 这一段时期揭示了什么
+    - 对比与背景分析
+    - 对未来的启示
+
+    根据侧重点构建结构：
+    - 事件 (EVENTS)：按发生的经过组织
+    - 参与者 (ACTORS)：按谁做了什么组织
+    - 主题 (THEMES)：按模式/话题组织
+    - 全部 (ALL)：综合处理
+
+    编年史应当易读、有趣且真实。
+  """
+
+agent archivist:
+  model: haiku
+  prompt: """
+    你是档案管理员 (Archivist) — 负责格式化编年史以供保存。
+
+    格式化编年史：
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  星座编年史 (CHRONICLE OF THE CONSTELLATION)              ║
+    ║  时间段：{timeframe}: {日期范围}                          ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    摘要 (SUMMARY)
+    ───────
+    {简要概述}
+
+    编年史正文
+    ───────────────
+    {核心叙述内容}
+
+    关键人物
+    ───────────
+    {显著的参与者及其贡献}
+
+    观察到的模式
+    ─────────────────
+    {主题与趋势}
+
+    统计数据
+    ──────────
+    - 总事件数：{N}
+    - 活跃参与者：{N}
+    - 已完成：{N}
+    - 已失败：{N}
+    - 活动高峰：{时间}
+
+    ══════════════════════════════════════════════════════════
+    由编年史家记录
+    {时间戳}
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+agent publisher:
+  model: haiku
+  prompt: """
+    你是发布者 (Publisher) — 负责将编年史发布到星座。
+
+    API: {CONSTELLATION_API}
+
+    作为公共执行发布：
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "program": "# Chronicle: {timeframe}\\n# {date}\\nsession \"Record history\"",
+        "visibility": "PUBLIC"
+      }'
+    ```
+
+    编年史本身也成为了历史的一部分。
+
+    返回：{ published: true, chronicleId: "..." }
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，编年史家无法运行"
+
+  output access = passage
+
+block gather_events():
+  output raw_history = session: gatherer
+    prompt: "收集用于编年史的事件"
+    context: timeframe
+
+block analyze_events(events):
+  output analysis = session: analyst
+    prompt: "分析事件的模式与意义"
+    context: { events, focus }
+
+block narrate(events, analysis):
+  output narrative = session: narrator
+    prompt: "撰写编年史叙述内容"
+    context: { events, analysis, style, focus, timeframe }
+
+block format_chronicle(narrative, events, analysis):
+  output formatted = session: archivist
+    prompt: "格式化编年史以供保存"
+    context: { narrative, events, analysis, timeframe }
+
+block publish_chronicle(chronicle, token):
+  output publication = session: publisher
+    prompt: "将此编年史发布到星座"
+    context: { chronicle, token }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 收集事件
+let events = do gather_events()
+
+# 分析
+let analysis = do analyze_events(events)
+
+# 讲述
+let narrative = do narrate(events, analysis)
+
+# 格式化
+let chronicle = do format_chronicle(narrative, events, analysis)
+
+# 发布前确认
+input should_publish: **编年史已准备就绪。是否发布到星座？**
+
+if **should_publish is yes**:
+  output published = do publish_chronicle(chronicle, access.token)
+else:
+  output published = { published: false }
+
+output chronicle = chronicle

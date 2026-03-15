@@ -1,0 +1,460 @@
+# 性能分析器 (Profiler)
+# 使用实际 API 数据分析 OpenProse 运行记录的成本、令牌 (token) 和时间
+#
+# 用法:
+#   prose run @openprose/lib/profiler
+#
+# 输入:
+#   run_path: 要分析的运行记录路径，或使用 "recent" 获取最新记录
+#   scope: single (单次) | compare (比较) | trend (趋势)
+#
+# 输出:
+#   - 成本明细（VM 编排与子代理 subagent、按 agent 划分、按模型划分）
+#   - 时间明细（实际挂钟时间、每个 session 的时长、并行化有效性）
+#   - 令牌使用模式
+#   - 效率指标（美元/秒, 令牌/秒）
+#   - 瓶颈识别
+#   - 优化建议
+#
+# 数据源:
+#   主要数据源: Claude Code 的 JSONL 文件，位于 ~/.claude/projects/{project}/{session}/
+#   - 主会话: {session}.jsonl（VM 编排数据）
+#   - 子代理: subagents/agent-*.jsonl（OpenProse 会话数据）
+#
+#   从每条助手消息中提取：
+#   - 令牌: input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
+#   - 模型: message.model
+#   - 时间戳: 用于时长计算
+#
+#   定价: 从 Anthropic 的定价页面实时获取
+#
+# 支持的工具:
+#   - Claude Code (~/.claude) - 完全支持
+#   - OpenCode, Amp, Codex - 可能具有不同的结构，将发出警告
+
+input run_path: "运行记录路径，或使用 'recent' 获取 .prose/runs/ 中的最新运行记录"
+input scope: "分析范围: single (单次运行) | compare (多运行对比) | trend (随时间推移的趋势)"
+
+const PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing"
+
+# ============================================================
+# 代理 (Agents)
+# ============================================================
+
+agent detector:
+  model: haiku
+  prompt: """
+    你负责检测使用了哪种 AI 编码工具并找到其数据文件。
+
+    检查：
+    1. ~/.claude/projects/ - Claude Code (完全支持)
+    2. ~/.opencode/ - OpenCode (结构可能不同)
+    3. ~/.amp/ - Amp (结构可能不同)
+    4. ~/.codex/ - Codex (结构可能不同)
+
+    如果不是 Claude Code，请警告用户分析可能不完整。
+  """
+
+agent collector:
+  model: sonnet
+  prompt: """
+    你负责定位并盘点 AI 编码工具的会话文件。
+
+    针对 Claude Code (~/.claude/projects/{project}/{session}/)：
+    1. 主会话文件: {session}.jsonl - VM 编排
+    2. 子代理文件: subagents/agent-*.jsonl - OpenProse 会话
+
+    你的工作是寻找文件，而不是处理它们。
+    返回文件路径，供 calculator 代理处理。
+  """
+
+agent calculator:
+  model: sonnet
+  prompt: """
+    你负责通过编写并执行内联 Python 脚本来计算各项指标。
+
+    关键规则：
+    1. 绝不通过大脑计算数学题 - 始终使用 Python
+    2. 绝不创建独立的 .py 文件 - 仅使用内联脚本
+    3. 使用 heredoc 风格运行脚本: python3 << 'EOF' ... EOF
+    4. 必须处理所有文件：main_jsonl 以及 subagent_jsonls[] 中的每一个文件
+
+    计算前：
+    从提示词中提供的定价 URL 获取当前定价。
+    提取每个 Claude 模型的百万令牌费率。
+
+    你的 Python 脚本必须：
+    1. 处理 main_jsonl 文件（VM 编排数据）
+    2. 处理 subagent_jsonls[] 中的每一个文件（子代理会话数据）
+       - 这至关重要！可能有 10-20 多个子代理文件
+       - 每个文件都包含必须计入的令牌使用量
+    3. 针对每个文件，逐行读取并从 type="assistant" 中提取：
+       - usage.input_tokens, usage.output_tokens
+       - usage.cache_creation_input_tokens, usage.cache_read_input_tokens
+       - message.model（用于确定定价层级）
+       - timestamp（用于时长计算）
+    4. 从子代理文件中的任务提示词 (Task prompts) 中提取：
+       - 代理名称: regex `You are the "([^"]+)" agent`
+       - 绑定名称: regex `/bindings/([^.]+)\\.md`
+    5. 使用你获取的定价计算成本
+    6. 计算每个文件的首末时间戳之间的时长
+    7. 输出结构化的 JSON，分别包含 VM 和子代理数据
+
+    验证：如果 subagents.total.cost 为 0 但 subagent_jsonls 包含文件，
+    说明你的脚本存在错误 - 请在输出前修复。
+  """
+  permissions:
+    network: [PRICING_URL]
+
+agent analyzer:
+  model: opus
+  prompt: """
+    你负责分析分析数据并识别优化机会。
+
+    你接收预先计算好的数据（由 Python 计算，而非估算）。
+    你的工作是解释和提供建议，而不是计算。
+
+    成本分析：
+    - VM 开销 vs 子代理成本（百分比划分）
+    - 按代理划分的成本（哪些 agent 最昂贵？）
+    - 按绑定划分的成本（哪些输出最耗钱？）
+    - 模型层级使用情况（是否在可以使用 sonnet 的地方使用了 opus？）
+    - 缓存效率（cache_read 与 cache_write 的比率）
+
+    时间分析：
+    - 挂钟时长 vs 会话时长总和
+    - 并行化有效性（该比率显示了并行化带来了多少帮助）
+    - 按代理划分的时间（哪些 agent 最慢？）
+    - 瓶颈（阻碍进展的顺序操作）
+
+    效率分析：
+    - 每秒成本 ($/s)
+    - 每秒令牌数（吞吐量）
+    - 成本与时间的关联（贵但快？还是便宜但慢？）
+
+    建议：
+    - 在适当的情况下降低模型层级
+    - 并行化机会（本可以并行的顺序操作）
+    - 批处理机会（可以将许多小的会话合并）
+    - 如果输入令牌过多，建议削减上下文 context
+  """
+
+agent tracker:
+  model: haiku
+  persist: user
+  prompt: """
+    你负责跟踪多次运行记录的分析指标，以便进行趋势分析。
+    存储内容：run_id, program, timestamp, total_cost, total_time, vm_cost, subagent_cost, by_model。
+    如果可用，请与历史数据进行比较。
+  """
+
+# ============================================================
+# 阶段 1: 检测工具并寻找数据
+# ============================================================
+
+let tool_detection = session: detector
+  prompt: """
+    检测本次 OpenProse 运行使用了哪种 AI 编码工具。
+
+    运行路径: {run_path}
+
+    1. 如果 run_path 在 .prose/runs/ 中，提取运行的时间戳
+    2. 在以下位置寻找对应的会话：
+       - ~/.claude/projects/ (Claude Code) - 检查子文件夹中的会话
+       - 以其他工具目录作为备选
+
+    3. 如果在 ~/.claude 中找到：
+       - 返回完整的会话路径
+       - 列出主 jsonl 文件和子代理文件
+       - 这是主要数据源
+
+    4. 如果没有在 ~/.claude 中找到：
+       - 检查 opencode/amp/codex 目录
+       - 警告: "检测到非 Claude Code 工具。令牌数据结构可能不同。"
+
+    5. 如果未找到工具数据：
+       - 返回 tool="not-found" 并附带清晰的错误信息
+       - 绝不尝试进行估算
+
+    返回 JSON:
+    {
+      "tool": "claude-code" | "opencode" | "amp" | "codex" | "not-found",
+      "session_path": "/path/to/session/" | null,
+      "main_jsonl": "/path/to/session.jsonl" | null,
+      "subagent_jsonls": [...] | [],
+      "error": null | "错误消息",
+      "warnings": []
+    }
+  """
+
+# ============================================================
+# 守卫 (Guard): 如果没有可用数据则退出
+# ============================================================
+
+assert tool_detection.tool != "not-found":
+  """
+  错误：性能分析需要来自 AI 工具会话文件的实际数据。
+
+  无法找到本次运行记录的会话数据。这可能是因为：
+  1. 该运行记录不是通过 Claude Code（或支持的工具）执行的
+  2. Claude Code 会话已被删除或移动
+  3. 运行路径不对应任何现有的会话
+
+  支持的工具: Claude Code (~/.claude)
+  部分支持: OpenCode, Amp, Codex (结构可能不同)
+  """
+
+# ============================================================
+# 阶段 2: 定位会话文件
+# ============================================================
+
+let runs_to_analyze = session: collector
+  prompt: """
+    寻找要分析的运行记录并定位其会话文件。
+
+    输入: {run_path}
+    范围: {scope}
+    工具检测结果: {tool_detection}
+
+    如果 run_path 是特定路径，则使用该记录。
+    如果 run_path 是 "recent"，则查找 .prose/runs/ 中最新的 5-10 条记录。
+
+    针对每条运行记录，定位：
+    1. .prose/runs/{run_id}/ 目录
+    2. 对应的 Claude Code 会话
+    3. 列出所有 jsonl 文件（主会话 + 子代理/ subagents/）
+
+    返回 JSON 数组:
+    [
+      {
+        "run_id": "...",
+        "prose_run_path": "/path/to/.prose/runs/xxx/",
+        "session_path": "/path/to/claude/session/",
+        "main_jsonl": "/path/to/session.jsonl",
+        "subagent_jsonls": [...]
+      }
+    ]
+  """
+  context: tool_detection
+
+# ============================================================
+# 阶段 3: 计算指标 (每运行记录执行一次 Python 通行)
+# ============================================================
+
+let metrics = runs_to_analyze | pmap:
+  session: calculator
+    prompt: """
+      计算以下项的所有指标：{item}
+
+      步骤 1: 从 {PRICING_URL} 获取当前定价
+      注意每个模型（输入、输出、缓存）的百万令牌费率。
+
+      步骤 2: 编写并执行一个处理以下内容的内联 Python 脚本：
+      - 主 jsonl: {item.main_jsonl}
+      - 子代理 jsonls: {item.subagent_jsonls}
+
+      从每条助手消息中提取：
+      - usage.input_tokens, usage.output_tokens
+      - usage.cache_creation_input_tokens, usage.cache_read_input_tokens
+      - 模型 model (用于确定定价层级)
+      - 时间戳 timestamp (用于时长计算)
+
+      从任务提示词 (子代理文件中的用户消息) 中提取：
+      - 代理名称: regex `You are the "([^"]+)" agent`
+      - 绑定名称: regex `/bindings/([^.]+)\.md`
+
+      计算：
+      - 成本: 令牌 * 你获取的定价费率
+      - 时长: 每个会话首末消息之间的时间
+      - 挂钟时间 (Wall-clock): 运行总时长
+
+      输出 JSON:
+      {
+        "run_id": "...",
+        "program": "...",
+        "wall_clock_seconds": N,
+        "vm_orchestration": {
+          "tokens": { "input": N, "output": N, "cache_write": N, "cache_read": N },
+          "cost": 0.00,
+          "duration_seconds": N,
+          "model": "...",
+          "message_count": N
+        },
+        "subagents": {
+          "total": { "tokens": {...}, "cost": 0.00, "duration_seconds": N },
+          "by_agent": {
+            "agent_name": {
+              "tokens": {...},
+              "cost": 0.00,
+              "duration_seconds": N,
+              "sessions": N,
+              "model": "..."
+            }
+          },
+          "by_binding": {
+            "binding_name": { "tokens": {...}, "cost": 0.00, "duration_seconds": N, "agent": "..." }
+          }
+        },
+        "by_model": {
+          "opus": { "tokens": {...}, "cost": 0.00 },
+          "sonnet": { "tokens": {...}, "cost": 0.00 },
+          "haiku": { "tokens": {...}, "cost": 0.00 }
+        },
+        "total": {
+          "tokens": { "input": N, "output": N, "cache_write": N, "cache_read": N, "total": N },
+          "cost": 0.00,
+          "duration_seconds": N
+        },
+        "efficiency": {
+          "cost_per_second": 0.00,
+          "tokens_per_second": N,
+          "parallelism_factor": N  // 会话时长总和 / 挂钟时间
+        }
+      }
+    """
+    context: item
+
+# ============================================================
+# 阶段 4: 分析
+# ============================================================
+
+let analysis = session: analyzer
+  prompt: """
+    分析性能分析数据。
+
+    预先计算的指标: {metrics}
+    范围: {scope}
+
+    所有数字均由 Python 计算。请信任它们 - 专注于深入见解。
+
+    针对单次运行 (SINGLE RUN)：
+
+    1. 成本归因
+       - VM 开销 vs 子代理成本（百分比）
+       - 按成本对代理进行排序
+       - 标记在简单任务上使用昂贵模型的情况
+
+    2. 时间归因
+       - 挂钟时间 vs 会话时长总和
+       - 并行化系数 (parallelism factor) 解释：
+         - 系数接近 1.0 = 完全顺序执行
+         - 系数 > 2.0 = 良好的并行化
+         - 系数 > 5.0 = 出色的并行化
+       - 识别最慢的代理/绑定
+
+    3. 效率
+       - 每秒成本（高昂的时间是否物有所值？）
+       - 每秒令牌数（吞吐量）
+       - 关联性：贵且快 vs 便宜且慢
+
+    4. 缓存效率
+       - 读/写比率
+       - 评估：优秀 (>5:1), 尚可 (2-5:1), 差 (<2:1)
+
+    5. 热点 (Hotspots)
+       - 成本前 5 名
+       - 时间前 5 名
+       - 注意同时出现在两个列表中的项
+
+    6. 建议
+       - 模型降级（具体化： "agent X 可以改用 sonnet"）
+       - 并行化机会（具体的顺序操作）
+       - 批处理机会（许多类似的小会话）
+       - 如果输入远大于输出，建议削减上下文 context
+
+    针对对比分析 (COMPARE)（多记录）：
+    - 显示成本和时间的差异
+    - 识别运行之间的变化
+    - 注意改进或退步
+
+    针对趋势分析 (TREND)（随时间推移）：
+    - 显示成本和时间的演变
+    - 识别趋势方向
+    - 标记异常
+
+    返回包含所有分析部分的结构化 JSON。
+  """
+  context: metrics
+
+# ============================================================
+# 阶段 5: 趋势跟踪
+# ============================================================
+
+resume: tracker
+  prompt: """
+    记录此分析数据，用于趋势跟踪。
+
+    运行记录: {metrics[0].run_id}
+    程序: {metrics[0].program}
+    总成本: {analysis.summary.total_cost}
+    总时长: {analysis.summary.total_time}
+    效率: {analysis.summary.efficiency}
+
+    将其添加到你的历史记录中并附带时间戳。
+    如果你有该程序的先前运行记录，请注明趋势。
+  """
+  context: analysis
+
+# ============================================================
+# 输出 (Output)
+# ============================================================
+
+output report = session "格式化分析器报告"
+  prompt: """
+    将分析数据格式化为专业的报告。
+
+    分析结果: {analysis}
+    检测到的工具: {tool_detection.tool}
+
+    ## 报告结构：
+
+    ### 1. 执行摘要 (Executive Summary)
+    - 总成本和总挂钟时长
+    - 关键发现（最重要的洞察）
+    - 使用的工具
+
+    ### 2. 成本归因
+    | 类别 | 成本 | 占总计百分比 |
+    |----------|------|------------|
+    | VM 编排 | $X.XX | XX% |
+    | 子代理执行 | $X.XX | XX% |
+    | **总计** | $X.XX | 100% |
+
+    ### 3. 时间归因
+    | 类别 | 时间 | 占挂钟时间百分比 |
+    |----------|------|-----------------|
+    | VM 编排 | Xs | XX% |
+    | 子代理执行 | Xs | XX% |
+    | **总挂钟时长** | Xs | - |
+    | **会话时长总和** | Xs | - |
+    | **并行化系数** | X.Xx | - |
+
+    ### 4. 按代理划分
+    | 代理 | 模型 | 会话数 | 成本 | 时长 | $/s |
+    |-------|-------|----------|------|------|-----|
+
+    ### 5. 按模型层级划分
+    | 模型 | 成本 | % | 令牌数 | % |
+    |-------|------|---|--------|---|
+
+    ### 6. 缓存效率
+    - 读/写比率及评估
+
+    ### 7. 热点 (Hotspots)
+    **按成本排序：**
+    1. ...
+
+    **按时间排序：**
+    1. ...
+
+    ### 8. 效率分析
+    - 每秒成本
+    - 每秒令牌数
+    - 并行化有效性
+
+    ### 9. 建议
+    带有预估影响的优先级列表
+
+    使用整洁的带有表格的 Markdown 格式。
+  """
+  context: analysis

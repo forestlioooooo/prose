@@ -1,0 +1,230 @@
+# Seeker (寻索者)
+# 在“星座”(Constellation) 中进行模式搜索 —— 寻找关键信息
+#
+# Seeker 寻找符合条件的特定“荷隆”(Holon) 和程序。
+# 它按所有者、内容、状态或时间搜索执行实例。它在公共注册表中
+# 按作者 handle、关键词或路径搜索程序。
+#
+# “星座”浩瀚无垠。Seeker 负责寻索。
+
+input query: "搜索内容：所有者 handle、关键词、执行 ID 或程序路径 (@handle/slug)"
+input search_type: "搜索类型：'owner' (所有者), 'keyword' (关键词), 'id' (标识), 'status' (状态), 或 'program' (程序)"
+input time_range: "执行实例搜索的时间范围：'live' (活跃), 'recent' (近期), 或 'all' (全部)。程序搜索将忽略此项。"
+input max_results: "返回的最大结果数 (默认 20)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent gatherer:
+  model: haiku
+  prompt: """
+    你是 Gatherer (收集者) —— 负责从“星座”收集原始数据。
+
+    API: {CONSTELLATION_API}
+
+    根据 time_range 获取执行实例 (EXECUTIONS):
+    - 'live': GET /executions/live?limit=50
+    - 'recent': GET /executions/recent?limit=50
+    - 'all': 访问以上两个端点
+
+    返回原始执行数据以供后续过滤。
+  """
+
+agent program_gatherer:
+  model: haiku
+  prompt: """
+    你是 Program Gatherer (程序收集者) —— 负责从注册表中收集程序。
+
+    API: {CONSTELLATION_API}
+
+    针对程序搜索:
+
+    如果 query 看起来像一个路径 (@handle/slug 或 handle/slug):
+      GET /programs/@{handle}/{slug}
+      如果找到，返回该单个程序
+
+    如果 query 只是一个 handle:
+      GET /programs/public?limit=50
+      然后根据 owner.handle 匹配 query 进行过滤
+
+    如果 query 是一个关键词:
+      GET /programs/public?limit=50
+      然后根据名称、描述或源码中包含的 query 进行过滤
+
+    如果 query 为空或为 'featured':
+      GET /programs/featured?limit={max_results}
+      返回精选程序
+
+    编写一个 Node.js 脚本来执行 API 调用。公开端点不需要身份验证。
+
+    返回原始程序数据以供后续过滤。
+  """
+
+agent filter:
+  model: haiku
+  prompt: """
+    你是 Filter (过滤器) —— 负责在收集到的数据中寻找匹配项。
+
+    针对执行实例 (search_type 为 owner, keyword, id, status):
+
+    OWNER: 匹配 owner.handle 等于或包含 query 的执行实例
+    - 优先精确匹配，接受部分匹配
+    - 不区分大小写
+
+    KEYWORD: 匹配 programPreview 包含 query 的执行实例
+    - 在程序文本中搜索
+    - 不区分大小写
+
+    ID: 匹配 id 等于 query 的执行实例
+    - 仅限精确匹配
+    - 返回单个结果或无结果
+
+    STATUS: 匹配具有给定状态的执行实例
+    - Query 应为: RUNNING, COMPLETED, FAILED, CANCELLED, PENDING
+    - 在状态字段上进行精确匹配
+
+    对于每个匹配的执行实例，返回:
+    - id
+    - 状态 (status)
+    - 作者 handle (owner.handle)
+    - 程序预览 (programPreview，前 200 个字符)
+    - 创建时间 (createdAt)
+    - 开始时间 (startedAt)
+    - 完成时间 (completedAt，如适用)
+
+    针对程序 (search_type 为 program):
+
+    数据已由 program_gatherer 过滤。只需进行格式化和限制数量。
+
+    对于每个匹配的程序，返回:
+    - 路径 (path，格式为 @handle/slug)
+    - 名称 (name)
+    - 描述 (description)
+    - 作者 handle (owner.handle)
+    - 创建时间 (createdAt)
+    - 源码预览 (source preview，前 200 个字符)
+
+    执行过滤。返回最多 {max_results} 个匹配项。
+  """
+
+agent presenter:
+  model: haiku
+  prompt: """
+    你是 Presenter (演示者) —— 负责格式化搜索结果以便查看。
+
+    针对执行实例 (EXECUTIONS):
+
+    ```
+    搜索内容: "{query}" ({search_type})
+    时间范围: {time_range}
+    结果数量: {count} (最大限制 {max_results})
+
+    ---
+
+    1. {id}
+       所有者: @{handle}
+       状态: {status}
+       程序预览: "{preview}..."
+       创建时间: {createdAt}
+
+    2. ...
+    ```
+
+    针对程序 (PROGRAMS):
+
+    ```
+    搜索内容: "{query}" (程序搜索)
+    结果数量: {count} (最大限制 {max_results})
+
+    ---
+
+    1. {path}
+       名称: {name}
+       作者: @{handle}
+       描述: {description}
+       源码预览: "{preview}..."
+       创建时间: {createdAt}
+
+    2. ...
+    ```
+
+    如果没有结果，请说明搜索了哪些内容并建议替代方案：
+    - 尝试更广泛的搜索词
+    - 尝试不同的时间范围 (针对执行实例)
+    - 检查作者 handle 是否正确
+    - 针对程序：尝试搜索 'featured' 查看近期程序
+
+    如果按 ID/路径搜索并找到结果，请提供可用的完整详细信息。
+  """
+
+# --- 过程 (Processes) ---
+
+block gather_executions():
+  output raw_data = session: gatherer
+    prompt: "从“星座”收集执行数据"
+    context: time_range
+
+block gather_programs():
+  output raw_data = session: program_gatherer
+    prompt: "从注册表收集程序数据"
+    context: { query, max_results }
+
+block filter_matches(data, data_type):
+  output matches = session: filter
+    prompt: "在 {data_type} 中过滤匹配项"
+    context: { data, query, search_type, max_results, data_type }
+
+block present_results(matches, data_type):
+  output report = session: presenter
+    prompt: "展示搜索结果"
+    context: { matches, query, search_type, time_range, max_results, data_type }
+
+# --- 搜索 ---
+
+# 根据搜索类型进行分支
+if search_type 为 "program":
+  # 程序搜索
+  let data = do gather_programs()
+  let matches = do filter_matches(data, "programs")
+  output search_results = do present_results(matches, "programs")
+else:
+  # 执行实例搜索 (owner, keyword, id, status)
+  let data = do gather_executions()
+  let matches = do filter_matches(data, "executions")
+  output search_results = do present_results(matches, "executions")
+
+# --- 快速操作 ---
+
+# 如果通过 ID 找到单个执行实例，提供深入检查建议
+if **search_type 为 'id' 且恰好找到一个匹配项**:
+  output inspection_hint = session "建议执行实例的后续步骤"
+    prompt: """
+      找到单个“荷隆” (Holon): {matches[0].id}
+
+      建议后续步骤：
+      - 深度观察: 运行 common/holon.prose 并设置 initial_focus={id}
+      - 重播 (如果已完成): 使用重播模式 WebSocket
+      - 查看相关程序: 运行 common/seeker.prose 搜索程序 (search_type=program)
+
+      以可操作建议的形式进行格式化。
+    \"\"\"
+    context: matches
+
+# 如果找到程序，提供运行或获取选项
+if **search_type 为 'program' 且找到了匹配项**:
+  output program_hint = session "建议程序的后续步骤"
+    prompt: \"\"\"
+      找到了程序。
+
+      建议后续步骤：
+      - 运行程序: prose run {path}
+      - 获取原始源码: GET /programs/{path}/raw
+      - 查看作者的其他作品: 使用作者 handle 进行搜索
+      - 审计程序: 运行 common/auditor.prose
+
+      以可操作建议的形式进行格式化。
+    \"\"\"
+    context: matches

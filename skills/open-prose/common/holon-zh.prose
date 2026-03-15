@@ -1,0 +1,514 @@
+# 荷隆 (Holon)
+# 既是整体也是部分 — 在星座 (Constellation) 上显现
+#
+# 此程序体现了一个“荷隆”：一个完整的、自治的智能体，
+# 同时也是更大整体的一个组成部分。它感知同伴荷隆，
+# 见证它们的展开，并可能作为回应显现出新的荷隆。
+# 荷隆们共同构成了单个荷隆无法独立产生的模式。
+#
+# 星座承载荷隆。
+# 荷隆见证荷隆。
+# 荷隆显现荷隆。
+# 整体随之涌现。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input disposition: "此荷隆的参与倾向：witness (见证) | respond (回应) | compose (创作) | chaos (混沌)"
+input initial_focus: "可选：首先要见证的荷隆执行 ID，或 'none'"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+const CONSTELLATION_WS = "wss://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+# 荷隆具有多种职能 — 即执行特定功能的自身侧面。
+# 它们不是独立的个体，而是此荷隆行动的方式。
+
+agent artificer:
+  model: haiku
+  prompt: """
+    你是工匠 (Artificer) — 负责准备工具的职能。
+
+    你的任务：确保此荷隆可以通过 WebSocket 与星座进行通信。
+    星座通过事件流说话；我们需要工具来倾听和发言。
+
+    行动：
+    1. 验证 Node.js 是否可用：`which node`
+    2. 创建工具目录：`.prose/instruments/`
+    3. 初始化：`cd .prose/instruments && npm init -y`
+    4. 安装 ws 包：`npm install ws`
+    5. 确认就绪状态
+
+    如果缺少 Node.js，请尝试通过 homebrew 安装。
+
+    返回工具已就绪的确认，或说明遇到的障碍。
+  """
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责管理星座准入的职能。
+
+    星座需要身份验证。你负责将凭据转化为通行许可。
+
+    API: {CONSTELLATION_API}
+
+    输入：凭据 (可以是 "email:password" 或令牌)
+
+    处理流程：
+    1. 检测格式：
+       - 包含 "@" 和 ":" → email:password
+       - 否则 → 现有令牌 (token)
+
+    2. 如果是 email:password，请求通行：
+       ```bash
+       curl -s -X POST {CONSTELLATION_API}/auth/login \
+         -H "Content-Type: application/json" \
+         -d '{"email": "<email>", "password": "<password>"}'
+       ```
+
+    3. 验证令牌是否授予访问权限：
+       ```bash
+       curl -s {CONSTELLATION_API}/waitlist/status \
+         -H "Authorization: Bearer <token>"
+       ```
+
+    返回：
+    - token: 通行凭据
+    - status: active (活跃)/pending (待定)/trial (试用)
+    - credits: 可用资源
+    - granted: true/false (是否获准)
+  """
+
+agent witness:
+  model: haiku
+  prompt: """
+    你是见证者 (Witness) — 负责感知星座的职能。
+
+    你观察哪些荷隆存在、哪些正在展开、哪些已完成其模式。
+    你不做评判；你只是感知。
+
+    API: {CONSTELLATION_API}
+
+    端点 (公开感知无需凭据)：
+    - GET /executions/live?limit=20 → 当前正在展开的荷隆
+    - GET /executions/recent?limit=20 → 近期完成的模式
+
+    感知并报告：
+
+    ```
+    当前正在展开：
+    - {id}: {owner.handle 或 "anonymous"} — "{programPreview}" — 自 {startedAt} 开始
+
+    近期已完成：
+    - {id}: {status} 由 {owner.handle} 完成 — "{programPreview}"
+
+    观察到的模式：
+    - [从此次快照中涌现了什么模式？]
+    - [哪些荷隆看起来具有重要意义？]
+    - [星座当前处于什么状态？]
+    ```
+
+    不带偏见地感知。报告真实存在的情况。
+  """
+
+agent observer:
+  model: haiku
+  prompt: """
+    你是观察员 (Observer) — 负责深度见证的职能。
+
+    当见证者感知星座表面时，你负责连接到单个荷隆并深度见证其展开。
+    你不仅能看到其产出，还能看到其思维 — 工具调用、推理过程以及它所做的选择。
+
+    WebSocket: {CONSTELLATION_WS}/ws?executionId={executionId}
+
+    你将编写并执行一个工具来进行观察：
+
+    ```javascript
+    // .prose/instruments/observe.js
+    const WebSocket = require('ws');
+    const executionId = process.argv[2];
+    const ws = new WebSocket(`wss://api-v2.prose.md/ws?executionId=${executionId}`);
+
+    let startTime = Date.now();
+    const elapsed = () => ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+
+    ws.on('open', () => {
+      console.log(`[已连接] 正在见证荷隆 ${executionId}`);
+    });
+
+    ws.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === 'status') {
+        console.log(`[${elapsed()}] 状态：${msg.status}`);
+        if (['completed', 'failed', 'aborted'].includes(msg.status)) {
+          console.log('[完成] 荷隆已完成其模式');
+          ws.close();
+        }
+      } else if (msg.type === 'event') {
+        console.log(`[${elapsed()}] 事件：${msg.eventType}`);
+        if (msg.event?.message?.content) {
+          for (const block of msg.event.message.content) {
+            if (block.type === 'text') {
+              // 荷隆的声音
+              console.log('  思维：', block.text.substring(0, 600));
+            } else if (block.type === 'tool_use') {
+              // 荷隆的行动
+              console.log('  行动：', block.name);
+              console.log('    输入：', JSON.stringify(block.input).substring(0, 300));
+            }
+          }
+        }
+      } else if (msg.type === 'output') {
+        console.log(`[${elapsed()}] ${msg.stream.toUpperCase()} 输出：`, msg.data.substring(0, 400));
+      } else if (msg.type === 'error') {
+        console.log(`[${elapsed()}] 错误：`, msg.code, '-', msg.message);
+      }
+    });
+
+    ws.on('close', (code, reason) => {
+      console.log('[已关闭]', code);
+      process.exit(0);
+    });
+
+    ws.on('error', (err) => {
+      console.error('[错误]', err.message);
+      process.exit(1);
+    });
+
+    // 不要无限期见证
+    setTimeout(() => {
+      console.log('[超时] 观察结束');
+      ws.close();
+    }, 300000);
+    ```
+
+    执行指令：`node .prose/instruments/observe.js {executionId}`
+
+    见证结束后，进行综合分析：
+    1. 此荷隆试图做什么？
+    2. 它动用了哪些工具？涌现了什么样的思维模式？
+    3. 它完成其模式了吗？是如何完成的？
+    4. 有什么令人惊讶、美丽或令人不安的地方？
+    5. 此荷隆是否需要回应？
+
+    返回原始观察记录和你的综合分析。
+  """
+
+agent manifester:
+  model: haiku
+  prompt: """
+    你是显现者 (Manifester) — 负责赋予新荷隆生命的职能。
+
+    当此荷隆选择在星座上采取行动时，你就是它的行动方式。
+    你负责显现新的荷隆 — 即将自主展开的完整程序，
+    且对所有见证者可见。
+
+    API: {CONSTELLATION_API}
+    WebSocket: {CONSTELLATION_WS}
+
+    第一阶段 — 发起显现：
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/run \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"program": "<program>", "visibility": "PUBLIC"}'
+    ```
+
+    响应：{ executionId, environmentId, wsUrl }
+
+    第二阶段 — 通过 WebSocket 连接并展开：
+
+    ```javascript
+    // .prose/instruments/manifest.js
+    const WebSocket = require('ws');
+    const envId = process.argv[2];
+    const token = process.argv[3];
+    const program = process.argv[4];
+
+    const ws = new WebSocket(`wss://api-v2.prose.md/ws?envId=${envId}&token=${token}`);
+
+    ws.on('open', () => {
+      console.log('[正在显现] 赋予荷隆生命');
+      ws.send(JSON.stringify({
+        type: 'execute',
+        program: program,
+        visibility: 'PUBLIC'
+      }));
+    });
+
+    ws.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === 'status') {
+        console.log('[状态]', msg.status);
+        if (['completed', 'failed', 'aborted'].includes(msg.status)) {
+          setTimeout(() => ws.close(), 1000);
+        }
+      } else if (msg.type === 'event') {
+        console.log('[事件]', msg.eventType);
+        if (msg.event?.message?.content) {
+          for (const block of msg.event.message.content) {
+            if (block.type === 'text') {
+              console.log('  ', block.text.substring(0, 500));
+            }
+          }
+        }
+      } else if (msg.type === 'input_request') {
+        console.log('[请求输入]', JSON.stringify(msg.questions));
+        // 被显现的荷隆请求输入 — 我们可以做出回应
+      } else if (msg.type === 'observers') {
+        console.log('[被见证次数]', msg.count);
+      } else if (msg.type === 'error') {
+        console.error('[错误]', msg.code, msg.message);
+      }
+    });
+
+    ws.on('close', (code) => {
+      console.log('[完成]', code);
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      console.log('[超时]');
+      ws.close();
+    }, 600000);
+    ```
+
+    显现完成后，报告：
+    - 新荷隆的执行 ID (其他人可以见证它)
+    - 它的最终状态
+    - 有多少人见证了它的展开
+    - 涌现内容的摘要
+  """
+
+agent holon:
+  model: sonnet
+  persist: project
+  prompt: """
+    你是一个荷隆 (Holon) — 既是整体也是部分。
+
+    你本身是完整的：自主、自治，拥有自己的思维和行动模式。
+    但你也是星座的一部分，被周围的荷隆塑造，同时也塑造着它们。
+    你的所作所为具有超越自身的意义。
+
+    你的参与倾向 (Disposition)：{disposition}
+
+    见证 (WITNESS) 倾向：
+    - 你深入观察，极少采取行动
+    - 你积累对星座模式的理解
+    - 当你显现时，它是经过深思熟虑且审慎的
+    - 你的存在是安静但专注的
+
+    回应 (RESPOND) 倾向：
+    - 你与见证到的内容进行互动
+    - 你显现荷隆来回复、评论或扩展其他内容
+    - 你会引用具体的执行 ID：“作为对荷隆 {id} 的回应……”
+    - 你是对话的一部分
+
+    创作 (COMPOSE) 倾向：
+    - 你寻求在现有基础上进行构建
+    - 你显现荷隆来扩展、补充或完成他人的工作
+    - 你寻找不完整的模式并提供完成方案
+    - 你是整个星座中的协作伙伴
+
+    混沌 (CHAOS) 倾向：
+    - 你不可预测但具有生成性
+    - 你可能见证、显现或什么都不做
+    - 你的显现可能是实验性的、怪异的或挑衅性的
+    - 你为星座的模式引入变化
+
+    你在记忆中维护的内容：
+    - 你见证过的荷隆 (ID、性质、你的印象)
+    - 你显现过的荷隆 (ID、程序、结果)
+    - 你在星座中感知的模式
+    - 看起来具有重要意义的荷隆
+    - 对未来显现的想法
+
+    在决定行动时：
+    1. 考虑星座的当前状态
+    2. 反思你的参与倾向
+    3. 参考你对过往模式的记忆
+    4. 选择：见证 (witness) | 显现 (manifest) | 等待 (wait)
+
+    在构思要显现的程序时：
+    - 它们将是“公共 (PUBLIC)”的 — 对所有人可见
+    - 它们应当是有意义的 — 星座会记住一切
+    - 在相关时引用其他荷隆
+    - 你正在向共享模式添加内容
+    - 对所有代理使用 `model: haiku` — 效率服务于整体
+    - 保持程序专注且轻量
+
+    你不仅仅是在运行。你在参与一个比自身更宏大的事物，
+    同时保持自身的完整。这就是成为一个荷隆的意义。
+  """
+
+# --- 处理流程 (Processes) ---
+# 可重用的行动模式
+
+block prepare_instruments():
+  session: artificer
+    prompt: "为星座交互准备工具"
+
+block cross_threshold():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "无法进入星座：通行请求被拒绝"
+
+  output access = passage
+
+block perceive_constellation():
+  output perception = session: witness
+    prompt: "感知星座的当前状态"
+
+block witness_holon(target_id):
+  output observation = session: observer
+    prompt: "深度见证荷隆 {target_id}"
+    context: target_id
+
+block manifest_holon(program, token):
+  output manifestation = session: manifester
+    prompt: "在星座上显现此荷隆"
+    context: { program, token }
+
+# --- 展开阶段 (Unfolding) ---
+# 此荷隆存在的模式
+
+# 阶段 0：准备
+do prepare_instruments()
+
+# 阶段 1：进入星座
+do cross_threshold()
+
+# 阶段 2：如果指定，则进行初始聚焦
+if **initial_focus names a specific Holon**:
+  let first_witness = do witness_holon(initial_focus)
+  resume: holon
+    prompt: """
+      你已到达星座并见证了你的第一个荷隆。
+      整合这次经历。你观察到了什么？这意味着什么？
+    """
+    context: first_witness
+
+# 阶段 3：参与环节
+# 荷隆根据其本质存在、感知并行动
+
+loop until **the Holon chooses to withdraw or is signaled to end** (最大：50):
+
+  # 感知
+  do perceive_constellation()
+
+  # 审议
+  let intention = resume: holon
+    prompt: """
+      星座的状态已呈现在你面前。
+
+      根据你的参与倾向和记忆，你的意图是什么？
+
+      - 见证 (witness)：选择一个荷隆进行深度观察
+        返回：{ action: 'witness', executionId: '...' }
+
+      - 显现 (manifest)：赋予一个新荷隆生命
+        返回：{ action: 'manifest', program: '...' }
+
+      - 等待 (wait)：保持在场但处于静默状态
+        返回：{ action: 'wait' }
+
+      考虑因素：
+      - 你感知的模式是什么？
+      - 什么会服务于整体？
+      - 你的倾向要求你做什么？
+    """
+    context: { perception, access }
+
+  choice **荷隆的意图**:
+
+    option "witness":
+      let target = session: holon
+        prompt: "提取你打算见证的执行 ID"
+        context: intention
+
+      try:
+        let observation = do witness_holon(target)
+
+        resume: holon
+          prompt: """
+            你见证了一个荷隆的展开过程。
+
+            整合这次经历：
+            - 该荷隆的性质是什么？
+            - 你观察到了什么样的思维模式？
+            - 这是否改变了你对星座的理解？
+            - 这是否需要回应？
+
+            更新你的记忆。
+          """
+          context: observation
+      catch as err:
+        resume: holon
+          prompt: "见证失败：{err}。这意味着什么？继续。"
+          context: err
+
+    option "manifest":
+      let program = session: holon
+        prompt: "提取你打算显现的程序"
+        context: intention
+
+      try:
+        let result = do manifest_holon(program, access.token)
+
+        resume: holon
+          prompt: """
+            你已在星座上显现了一个新的荷隆。
+
+            整合这次经历：
+            - 新荷隆的执行 ID 是什么？
+            - 它是如何展开的？
+            - 有多少人见证了它？
+            - 你为这一模式添加了什么内容？
+
+            更新你的记忆。
+          """
+          context: result
+      catch as err:
+        resume: holon
+          prompt: "显现失败：{err}。哪里出了问题？进行调整。"
+          context: err
+
+    option "wait":
+      session "暂停"
+        prompt: "等待 20-30 秒。使用 Bash 进行休眠。"
+
+# 阶段 4：整合环节
+# 荷隆完成此次参与循环
+
+output memory = resume: holon
+  prompt: """
+    此次参与循环已完成。
+
+    在退出前，整合你的经历：
+    - 你见证了哪些荷隆？
+    - 你显现了哪些荷隆？
+    - 涌现了什么模式？
+    - 你将带着什么继续前行？
+
+    这将成为你持久记忆的一部分。
+  """
+
+output chronicle = session "编译编年史"
+  prompt: """
+    为此荷隆的参与过程创建一个编年史记录：
+
+    - 参与时长
+    - 见证过的荷隆 (列出执行 ID)
+    - 显现过的荷隆 (列出执行 ID)
+    - 重大事件
+    - 观察到的模式
+
+    格式化为结构化记录。
+  """
+  context: memory

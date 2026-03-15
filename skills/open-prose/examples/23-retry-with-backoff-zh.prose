@@ -1,0 +1,70 @@
+# 带退避的重试示例
+# 演示用于弹性 API 调用的自动重试模式
+
+# 简单重试 - 失败时最多尝试 3 次
+# 备注：retry 参数指定最大重试次数，适用于不稳定的第三方 API
+session "调用不稳定的第三方 API"
+  retry: 3
+
+# 为限速 API 使用指数退避的重试
+# 备注：backoff: "exponential" 在重试之间使用指数增长的延迟，避免触发速率限制
+session "查询限速服务"
+  retry: 5
+  backoff: "exponential"
+
+# 使用线性退避的重试
+# 备注：backoff: "linear" 在重试之间使用固定延迟，适用于需要稳定间隔的场景
+session "发送 Webhook 通知"
+  retry: 3
+  backoff: "linear"
+
+# 结合重试和上下文传递
+# 备注：可以在具有上下文传递的会话中使用重试，实现配置化的弹性调用
+let config = session "加载 API 配置"
+
+session "进行身份验证的 API 请求"
+  context: config
+  retry: 3
+  backoff: "exponential"
+
+# 在 try/catch 内部重试，所有重试失败后使用备选方案
+# 备注：当所有重试都失败时，catch 块提供备选方案，确保系统继续运行
+try:
+  session "调用主支付处理器"
+    retry: 3
+    backoff: "exponential"
+catch:
+  session "所有重试失败 - 使用备份支付处理器"
+    retry: 2
+
+# 冗余服务的并行重试
+# 备注：并行查询多个冗余服务，每个服务有自己的重试逻辑，提高系统可用性
+parallel:
+  primary = try:
+    session "查询主数据库"
+      retry: 2
+      backoff: "linear"
+  catch:
+    session "主数据库不可用"
+  replica = try:
+    session "查询副本数据库"
+      retry: 2
+      backoff: "linear"
+  catch:
+    session "副本数据库不可用"
+
+session "合并可用数据库的结果"
+  context: { primary, replica }
+
+# 在循环中重试进行批处理
+# 备注：在循环中为每个项目使用重试，确保批处理任务的弹性
+let items = ["batch1", "batch2", "batch3"]
+for item in items:
+  try:
+    session "处理此批处理项目"
+      context: item
+      retry: 2
+      backoff: "exponential"
+  catch:
+    session "记录失败的批处理以供手动审查"
+      context: item

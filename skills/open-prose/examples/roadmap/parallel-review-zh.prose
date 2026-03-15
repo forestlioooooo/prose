@@ -1,0 +1,23 @@
+# 并行评审示例 (Parallel Review Example)
+# 三位评审员并行分析代码，然后进行综合。
+#
+# [备注]：OpenProse 关键字（如 agent, parallel, session 等）保持不变。
+# 该示例属于路线图 (Roadmap) 计划中的特性，目前可能无法运行。
+
+agent reviewer:
+  model: sonnet
+
+# 并行执行三类评审
+parallel:
+  security = session: reviewer
+    prompt: "评审此代码的安全问题 (security)"
+  performance = session: reviewer
+    prompt: "评审此代码的性能问题 (performance)"
+  style = session: reviewer
+    prompt: "评审此代码的代码风格和可读性 (style)"
+
+# 综合会话：将评审结果汇总
+session synthesizer:
+  model: opus
+  prompt: "将所有评审意见综合成一份统一的报告"
+  context: { security, performance, style }

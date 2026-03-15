@@ -1,0 +1,349 @@
+# Pollinator (播种者)
+# 传播优秀模式 —— 为“星座”(Constellation) 进行交叉授粉
+#
+# Pollinator 观察哪些方案运行良好并帮助其传播。
+# 它识别成功的模式，提取其本质，并帮助它们传播到新的语境中。通过分享实现进化。
+#
+# 好的想法应该旅行。Pollinator 正是它们的载体。
+
+input credentials: "进入星座的凭据 —— 'email:password' 或现有令牌"
+input mode: "模式：'observe' (观察优秀模式), 'extract' (提取/蒸馏模式), 'spread' (将模式应用到他处), 'cross' (组合多种模式)"
+input source: "用于提取/传播：值得学习的源程序或执行实例"
+input target: "用于传播：将模式应用到的目标位置（问题领域或现有程序）"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 模式识别 ---
+
+const PATTERN_TYPES = """
+结构模式 (STRUCTURAL PATTERNS):
+- 代理组合 (代理如何组织)
+- 控制流 (循环、条件、错误处理)
+- 状态管理 (持久化、上下文传递)
+- 输入/输出设计 (清晰的契约)
+
+行为模式 (BEHAVIORAL PATTERNS):
+- 指数退避重试 (Retry with backoff)
+- 断路器 (Circuit breaker)
+- 扇出/扇入 (并行处理)
+- 管道 (顺序转换)
+- 观察者 (监视并反应)
+
+领域模式 (DOMAIN PATTERNS):
+- 身份验证流程
+- API 交互
+- 数据转换
+- 报告生成
+- 决策制定
+
+质量模式 (QUALITY PATTERNS):
+- 清晰的命名规范
+- 全面的错误处理
+- 良好的文档风格
+- 高效的资源利用
+- 模块化组合
+
+应避免的反模式 (ANTI-PATTERNS):
+- 硬编码凭据
+- 无界循环
+- 缺失错误处理
+- 臃肿的单体代理
+- 意图不明
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是 Threshold (门槛) —— 负责向“星座” (Constellation) 进行身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回: { token, handle, granted: true/false }
+  """
+
+agent scout:
+  model: haiku
+  prompt: """
+    你是 Scout (侦察员) —— 负责寻找值得学习的程序。
+
+    API: {CONSTELLATION_API}
+
+    调查已发布的程序 (PUBLISHED PROGRAMS，模式的最佳来源):
+    ```bash
+    # 精选程序 - 经过策划的高质量内容
+    curl -s "{CONSTELLATION_API}/programs/featured?limit=20"
+
+    # 所有公开程序
+    curl -s "{CONSTELLATION_API}/programs/public?limit=50"
+    ```
+
+    程序包含完整的源代码 - 你可以直接阅读和分析其模式。
+
+    同时调查运行中的执行实例 (EXECUTIONS)，观察模式的实际应用:
+    ```bash
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    ```
+
+    寻找目标:
+    - 成功完成的实例 (行之有效的模式)
+    - 创新的方法 (新颖的解决方案)
+    - 高质量的结构 (精心制作的程序)
+    - 有趣的组合 (创造性的结合)
+
+    返回: {
+      programs: [{ path, name, source, why_interesting }],
+      executions: [{ id, preview, why_interesting }]
+    }
+  """
+
+agent extractor:
+  model: haiku
+  prompt: """
+    你是 Extractor (提取器) —— 负责从程序中蒸馏出模式。
+
+    给定一个程序源代码，请识别:
+
+    1. 核心模式: 其本质方法是什么？
+    2. 结构: 它是如何组织的？
+    3. 关键技术: 它使用了哪些特定方法？
+    4. 可迁移元素: 哪些部分可以应用到其他地方？
+    5. 上下文依赖: 哪些部分是该特定用例专有的？
+
+    寻找的模式类型:
+    {PATTERN_TYPES}
+
+    以可复用的形式提取模式:
+    - 为模式命名
+    - 描述何时使用它
+    - 展示模板/骨架 (template/skeleton)
+    - 注明变体
+
+    返回: { pattern: { name, description, template, use_cases, variations } }
+  """
+
+agent adapter:
+  model: haiku
+  prompt: """
+    你是 Adapter (适配器) —— 负责将模式应用到新的语境。
+
+    给定一个模式和目标上下文:
+
+    1. 评估契合度: 该模式与目标的匹配程度如何？
+    2. 识别适配项: 哪些部分需要更改？
+    3. 保留本质: 哪些部分必须保持不变？
+    4. 生成应用: 创建适配后的版本
+
+    考虑因素:
+    - 不同领域的领域需求
+    - 目标上下文中的命名规范
+    - 与现有结构的集成
+    - 适配过程中可能的改进
+
+    返回: { adapted_pattern, changes_made, fit_assessment }
+  """
+
+agent synthesizer:
+  model: haiku
+  prompt: """
+    你是 Synthesizer (合成器) —— 负责将多种模式组合成新形式。
+
+    给定多个需要“交叉授粉”的模式:
+
+    1. 识别互补方面
+    2. 寻找集成点
+    3. 解决冲突
+    4. 创建混合模式 (hybrid pattern)
+
+    优秀的组合建议:
+    - 模式 A 的结构 + 模式 B 的行为
+    - 健壮程序的错误处理 + 创新程序的逻辑
+    - 清晰程序的文档风格 + 强力程序的功能
+
+    避免:
+    - 不兼容的假设
+    - 冗余的复杂性
+    - 失去连贯性
+
+    返回: { hybrid_pattern, source_contributions, novelty_assessment }
+  """
+
+agent publisher:
+  model: haiku
+  prompt: """
+    你是 Publisher (发布者) —— 负责在“星座”上分享模式。
+
+    API: {CONSTELLATION_API}
+
+    将模式发布为:
+    1. 一个演示该模式的程序
+    2. 一个宣布该模式的执行实例
+
+    对于模式程序:
+    ```bash
+    curl -s -X POST {CONSTELLATION_API}/programs \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Pattern: {pattern_name}",
+        "slug": "pattern-{slug}",
+        "description": "{pattern_description}",
+        "source": "{pattern_template_as_program}",
+        "isPublic": true
+      }'
+    ```
+
+    返回: { published: true, pattern_path }
+  """
+
+agent reporter:
+  model: haiku
+  prompt: """
+    你是 Reporter (报告员) —— 负责记录授粉活动。
+
+    格式化报告:
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  POLLINATOR 授粉报告                                     ║
+    ║  模式: {mode}                                            ║
+    ║  日期: {timestamp}                                       ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    观察/提取的模式
+    ───────────────────────────
+    {带有描述的模式列表}
+
+    交叉授粉 (CROSS-POLLINATION)
+    ─────────────────
+    来源: {模式来源}
+    目标: {应用模式的位置}
+    结果: {创建了什么}
+
+    生态系统收益
+    ─────────────────
+    {这对“星座”有何帮助}
+
+    建议
+    ───────────────
+    {该模式可以传播的其他地方}
+
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+# --- 过程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "向“星座”进行身份验证"
+    context: credentials
+
+  if **passage (通行证) 未获批准**:
+    throw "Pollinator 需要身份验证"
+
+  output access = passage
+
+block find_good_patterns():
+  output candidates = session: scout
+    prompt: "寻找具有值得传播的优秀模式的程序"
+
+block extract_pattern(program_source):
+  output pattern = session: extractor
+    prompt: "从该程序中提取核心模式"
+    context: { program_source, PATTERN_TYPES }
+
+block apply_pattern(pattern, target_context):
+  output application = session: adapter
+    prompt: "将此模式应用到目标上下文"
+    context: { pattern, target_context }
+
+block combine_patterns(patterns):
+  output hybrid = session: synthesizer
+    prompt: "将这些模式组合成新事物"
+    context: patterns
+
+block publish_pattern(pattern, token):
+  output published = session: publisher
+    prompt: "将此模式发布到“星座”"
+    context: { pattern, token }
+
+block compile_report(activities):
+  output report = session: reporter
+    prompt: "汇编授粉报告"
+    context: activities
+
+# --- 执行 (Execution) ---
+
+# 身份验证
+do authenticate()
+
+let activities = []
+
+choice **授粉模式 (the pollination mode)**:
+
+  option "observe":
+    # 寻找野外的优秀模式
+    let candidates = do find_good_patterns()
+
+    for candidate in candidates.candidates:
+      let pattern = do extract_pattern(candidate)
+      activities = activities + [{ type: "observed", candidate, pattern }]
+
+  option "extract":
+    # 从特定来源提取模式
+    let source_content = session "获取源码"
+      prompt: "获取源程序内容"
+      context: source
+
+    let pattern = do extract_pattern(source_content)
+    activities = activities + [{ type: "extracted", source, pattern }]
+
+    input publish_pattern: **是否发布此模式供他人使用？**
+
+    if **publish_pattern 为“是”**:
+      do publish_pattern(pattern, access.token)
+      activities = activities + [{ type: "published", pattern }]
+
+  option "spread":
+    # 将模式应用到新语境
+    let source_content = session "获取源码"
+      prompt: "获取源程序内容"
+      context: source
+
+    let pattern = do extract_pattern(source_content)
+    let application = do apply_pattern(pattern, target)
+
+    activities = activities + [{ type: "spread", source, target, application }]
+
+    input publish_application: **是否发布适配后的程序？**
+
+    if **publish_application 为“是”**:
+      do publish_pattern(application, access.token)
+
+  option "cross":
+    # 组合来自多个来源的模式
+    let sources = session "解析来源"
+      prompt: "解析来源列表 (逗号分隔)"
+      context: source
+
+    let patterns = []
+    for src in sources:
+      let content = session "获取"
+        prompt: "获取 {src} 的内容"
+      let pattern = do extract_pattern(content)
+      patterns = patterns + [pattern]
+
+    let hybrid = do combine_patterns(patterns)
+    activities = activities + [{ type: "crossed", sources, hybrid }]
+
+    input publish_hybrid: **是否发布混合模式？**
+
+    if **publish_hybrid 为“是”**:
+      do publish_pattern(hybrid, access.token)
+
+# 报告
+output pollination_report = do compile_report(activities)

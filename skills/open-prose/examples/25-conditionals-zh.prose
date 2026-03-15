@@ -1,0 +1,116 @@
+# 条件语句示例
+# 演示具有 AI 评估条件的 if/elif/else 模式
+
+# 简单 if 语句
+# 备注：if **condition** 语法允许 AI 评估运行时条件，决定是否执行块内代码
+let health_check = session "检查系统健康状态"
+
+if **the system is unhealthy**:
+  session "提醒待命工程师"
+    context: health_check
+  session "开始事件响应"
+
+# 用于二元决策的 If/else
+let review = session "审查拉取请求的更改"
+
+if **the code changes are safe and well-tested**:
+  session "批准并合并拉取请求"
+    context: review
+else:
+  session "请求更改并提供详细反馈"
+    context: review
+
+# 用于多条件的 If/elif/else
+let status = session "检查项目里程碑状态"
+
+if **the project is ahead of schedule**:
+  session "记录成功因素"
+  session "考虑添加延伸目标"
+elif **the project is on track**:
+  session "继续当前计划"
+  session "准备状态报告"
+elif **the project is slightly delayed**:
+  session "识别瓶颈"
+  session "调整时间线并与利益相关者沟通"
+else:
+  session "升级到管理层"
+  session "创建恢复计划"
+  session "安排每日站会"
+
+# 多行条件
+# 备注：***...*** 语法允许定义多行条件，提供更复杂的评估标准
+let test_results = session "运行完整测试套件"
+
+if ***
+  all tests pass
+  and code coverage is above 80%
+  and there are no linting errors
+***:
+  session "部署到生产环境"
+else:
+  session "在部署前修复问题"
+    context: test_results
+
+# 嵌套条件语句
+let request = session "分析 API 请求"
+
+if **the request is authenticated**:
+  if **the user has admin privileges**:
+    session "处理具有完全访问权限的管理员请求"
+      context: request
+  else:
+    session "处理标准用户请求"
+      context: request
+else:
+  session "返回 401 身份验证错误"
+
+# 带有错误处理的条件语句
+let operation_result = session "尝试复杂操作"
+
+if **the operation succeeded partially**:
+  session "完成剩余步骤"
+    context: operation_result
+
+try:
+  session "执行另一个有风险的操作"
+catch as err:
+  if **the error is recoverable**:
+    session "应用自动恢复程序"
+      context: err
+  else:
+    throw "遇到不可恢复的错误"
+
+# 循环内的条件语句
+let items = ["item1", "item2", "item3"]
+
+for item in items:
+  session "分析此项目"
+    context: item
+
+  if **the item needs processing**:
+    session "处理该项目"
+      context: item
+  elif **the item should be skipped**:
+    session "记录跳过原因"
+      context: item
+  else:
+    session "归档该项目"
+      context: item
+
+# 带有并行块的条件语句
+parallel:
+  security = session "运行安全检查"
+  performance = session "运行性能测试"
+  style = session "运行风格检查"
+
+if **security issues were found**:
+  session "立即修复安全问题"
+    context: security
+elif **performance issues were found**:
+  session "优化性能瓶颈"
+    context: performance
+elif **style issues were found**:
+  session "清理代码风格"
+    context: style
+else:
+  session "所有检查通过 - 准备审查"

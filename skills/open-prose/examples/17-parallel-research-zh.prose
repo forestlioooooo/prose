@@ -1,0 +1,23 @@
+# 并行研究
+# 同时从多个来源收集信息
+
+# 定义研究代理
+agent researcher:
+  model: sonnet
+  prompt: "你是一名研究助理"
+
+# 并行研究多个方面
+# 备注：并行块允许同时探索主题的不同维度，节省时间
+# 每个并行任务专注于特定时间段或方面
+parallel:
+  history = session: researcher
+    prompt: "研究历史背景"
+  current = session: researcher
+    prompt: "研究该领域的当前状态"
+  future = session: researcher
+    prompt: "研究未来趋势和预测"
+
+# 组合所有研究
+# 备注：并行研究完成后，将结果综合成全面的摘要
+session "撰写全面的研究摘要"
+  context: { history, current, future }

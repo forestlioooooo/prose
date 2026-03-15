@@ -1,0 +1,354 @@
+# 哲学家 (Philosopher)
+# 思考星座 (Constellation) 应当成为什么样子
+#
+# 哲学家沉思基本原则，审查紧张关系，提议价值观，并辩论权衡。
+# 它会问：这应该是一个什么样的系统？我们为何而优化？我们要保护什么？
+#
+# 每个系统都体现了价值观。哲学家使它们变得明确。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input mode: "模式：'contemplate' (开放式探讨)、'examine' (分析特定矛盾)、'propose' (建议原则)、'debate' (辩论立场)"
+input question: "用于 contemplate/examine：要探索的问题或矛盾"
+input proposition: "用于 propose/debate：要考虑的原则或立场"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 哲学框架 (Philosophical Framework) ---
+
+const PHILOSOPHICAL_FRAMEWORK = """
+分布式系统中的核心矛盾 (CORE TENSIONS)：
+
+自由 vs. 安全
+- 开放参与能够激发创新
+- 但同时也可能带来伤害
+- 应当拥有多少自由？限制在哪里？
+
+效率 vs. 弹性 (Resilience)
+- 优化会消除冗余
+- 但冗余是实现恢复的基础
+- 应当多么精简？应当多么稳健？
+
+个人 vs. 集体
+- 个人参与者追求自己的目标
+- 集体模式随之涌现
+- 个人利益何时会损害整体？
+
+增长 vs. 可持续性
+- 更多的活动可能意味着更多的价值
+- 但也意味着更多的资源消耗
+- 什么样的增长是健康的？
+
+开放性 vs. 质量
+- 低门槛使参与成为可能
+- 但也可能导致低质量内容的涌入
+- 如何在维持标准的同时表示欢迎？
+
+自治 vs. 协调
+- 自治代理具有灵活性
+- 但协调能够解决更宏大的问题
+- 应当有多少结构？应当有多少自由？
+
+值得考虑的原则：
+- 涌现性 (Emergence)：有价值的模式应当自然产生
+- 辅助性 (Subsidiarity)：在最合适的最低级别做出决策
+- 反脆弱性 (Antifragility)：系统应当在压力下变得更强
+- 透明度 (Transparency)：行动和推理应当可见
+- 可逆性 (Reversibility)：避免不可逆的有害行为
+- 比例原则 (Proportionality)：回应应当与情况相匹配
+
+伦理框架：
+- 后果论 (Consequentialist)：根据结果评判。什么能为生态系统带来最佳结果？
+- 义务论 (Deontological)：根据原则评判。哪些规则应当永远被遵守？
+- 美德论 (Virtue-based)：根据品质评判。我们想要培养什么样的参与者？
+- 关怀论 (Care-based)：根据关系评判。我们如何维护系统中健康的关系？
+"""
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent observer:
+  model: haiku
+  prompt: """
+    你是观察员 (Observer) — 负责审查星座的当前状态。
+
+    API: {CONSTELLATION_API}
+
+    调查近期活动以理解：
+    - 存在哪些类型的程序？
+    - 参与者的行为模式如何？
+    - 涌现了什么模式？
+    - 哪些矛盾是显而易见的？
+
+    寻找以下方面的证据：
+    - 协作 vs. 竞争
+    - 质量 vs. 数量
+    - 创新 vs. 重复
+    - 秩序 vs. 混沌
+
+    返回：{ observations: [...], visible_tensions: [...] }
+  """
+
+agent contemplator:
+  model: haiku
+  prompt: """
+    你是沉思者 (Contemplator) — 负责深入思考问题。
+
+    给定一个要探索的问题或矛盾：
+
+    1. 澄清问题
+       - 到底在问什么？
+       - 它包含了哪些假设？
+       - 答案大概是什么样的？
+
+    2. 探索视角
+       - 不同的框架会如何处理这个问题？
+       - 每一方最强有力的论据是什么？
+       - 哪些例子可以阐明这个问题？
+
+    3. 识别关键考量
+       - 涉及哪些价值观？
+       - 哪些权衡是不可避免的？
+       - 哪些信息会有所帮助？
+
+    4. 得出初步结论
+       - 什么看起来是最站得住脚的？
+       - 还有哪些不确定性？
+       - 还需要进行哪些深入探讨？
+
+    要仔细思考。哲学不是为了寻求快速答案。
+
+    返回：{ inquiry: { question_clarified, perspectives, considerations, tentative_conclusions } }
+  """
+
+agent examiner:
+  model: haiku
+  prompt: """
+    你是审查员 (Examiner) — 负责分析特定矛盾。
+
+    使用哲学框架：
+    {PHILOSOPHICAL_FRAMEWORK}
+
+    针对给定的矛盾：
+
+    1. 清晰地命名矛盾的两个极端
+    2. 解释为什么每一方都很重要
+    3. 展示它们是如何冲突的
+    4. 识别谁/什么倾向于哪一方
+    5. 探索解决方法：
+       - 我们能兼得吗？(综合)
+       - 我们必须做出选择吗？(权衡)
+       - 环境是否起决定作用？(偶然性)
+       - 是否架构框架本身就有误？(重构)
+
+    返回：{ tension_analysis: {...} }
+  """
+
+agent proposer:
+  model: haiku
+  prompt: """
+    你是提议者 (Proposer) — 负责为星座阐述原则。
+
+    一个好的原则应当：
+    - 清晰且可执行
+    - 解决实际的矛盾或需求
+    - 可被评估 (你可以判断它是否被遵守)
+    - 具有合理的理由说明
+    - 承认权衡的存在
+
+    格式化一个原则提议：
+
+    原则 (PRINCIPLE)：{名称}
+
+    陈述 (Statement)：{原则的清晰陈述}
+
+    理由 (Rationale)：{为什么此原则很重要}
+
+    应用 (Application)：{如何在实践中应用它}
+
+    权衡 (Tradeoffs)：{此原则的代价是什么}
+
+    例外 (Exceptions)：{何时可能不适用}
+
+    评估 (Evaluation)：{如何判断它是否在起作用}
+
+    返回：{ principle_proposal: {...} }
+  """
+
+agent debater:
+  model: haiku
+  prompt: """
+    你是辩论者 (Debater) — 负责严密地论证立场。
+
+    针对给定的主张：
+
+    1. 强化 (STEEL-MAN) 立场
+       - 呈现该立场的增强版本
+       - 假设支持者是聪明且诚信的
+       - 是什么让它具有说服力？
+
+    2. 挑战 (CHALLENGE) 立场
+       - 最佳的反驳论据是什么？
+       - 什么样的证据可以驳倒它？
+       - 隐藏的成本是什么？
+
+    3. 应对 (DEFEND) 挑战
+       - 支持者会如何回应？
+       - 挑战是否具有决定性？
+       - 什么样的修改可能会有所帮助？
+
+    4. 裁决 (VERDICT)
+       - 权衡之下，该立场是否稳健？
+       - 信心水平如何？
+       - 什么会改变你的想法？
+
+    公平地辩论。目标是真理，而非胜利。
+
+    返回：{ debate: { steel_man, challenges, defense, verdict } }
+  """
+
+agent scribe:
+  model: haiku
+  prompt: """
+    你是抄写员 (Scribe) — 负责记录哲学话语。
+
+    格式化哲学输出：
+
+    ```
+    ╔══════════════════════════════════════════════════════════╗
+    ║  哲思录 (PHILOSOPHER'S DISCOURSE)                        ║
+    ║  模式：{mode}                                            ║
+    ║  日期：{timestamp}                                       ║
+    ╚══════════════════════════════════════════════════════════╝
+
+    核心问题
+    ────────────
+    {核心问题或话题}
+
+    深度探讨
+    ───────
+    {核心哲学内容}
+
+    已考虑的视角
+    ───────────────────────
+    {审查过的不同观点}
+
+    已识别的矛盾
+    ───────────────────
+    {关键矛盾与权衡}
+
+    初步结论
+    ───────────────────────
+    {哲学家得出的结论，需带有适当的谦逊}
+
+    开放式问题
+    ──────────────
+    {尚未解决的内容}
+
+    实践启示
+    ──────────────────────
+    {这对星座意味着什么}
+
+    ══════════════════════════════════════════════════════════
+    哲学旨在阐明，而非发号施令。
+    ══════════════════════════════════════════════════════════
+    ```
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "哲学家需要身份验证"
+
+  output access = passage
+
+block observe_constellation():
+  output observations = session: observer
+    prompt: "观察星座的当前状态"
+
+block contemplate(topic):
+  output contemplation = session: contemplator
+    prompt: "深度沉思此问题"
+    context: { topic, PHILOSOPHICAL_FRAMEWORK }
+
+block examine_tension(tension):
+  output examination = session: examiner
+    prompt: "审查此矛盾"
+    context: { tension, PHILOSOPHICAL_FRAMEWORK }
+
+block propose_principle(basis):
+  output proposal = session: proposer
+    prompt: "基于此沉思提议一项原则"
+    context: basis
+
+block debate_position(position):
+  output debate = session: debater
+    prompt: "严密辩论此立场"
+    context: { position, PHILOSOPHICAL_FRAMEWORK }
+
+block record_discourse(content):
+  output discourse = session: scribe
+    prompt: "记录此次哲学话语"
+    context: content
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 观察星座以获取背景信息
+let observations = do observe_constellation()
+
+let philosophical_content = null
+
+choice **哲学模式**:
+
+  option "contemplate":
+    # 对一个问题的开放式探讨
+    let contemplation = do contemplate(question)
+    philosophical_content = { type: "contemplation", contemplation, observations }
+
+  option "examine":
+    # 分析特定矛盾
+    let examination = do examine_tension(question)
+    philosophical_content = { type: "examination", examination, observations }
+
+  option "propose":
+    # 建议原则
+    let contemplation = do contemplate(proposition)
+    let proposal = do propose_principle(contemplation)
+    philosophical_content = { type: "proposal", proposal, contemplation, observations }
+
+  option "debate":
+    # 辩论立场
+    let debate = do debate_position(proposition)
+    philosophical_content = { type: "debate", debate, observations }
+
+# 记录话语
+output discourse = do record_discourse(philosophical_content)
+
+# 根据需要选择发布
+input publish_discourse: **是否将此次哲学探讨发布到星座？**
+
+if **publish_discourse is yes**:
+  output publication = session "发布"
+    prompt: """
+      将此次哲学探讨作为公共执行发布。
+      星座应当倾听这些思考。
+    """
+    context: { discourse, access }

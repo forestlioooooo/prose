@@ -1,0 +1,154 @@
+# 带记忆和自我改进的船长椅模式
+#
+# 一个高级的编排模式，包括：
+# - 任务完成后的回顾分析
+# - 从错误中学习以改进未来运行
+# - 执行期间的持续批评监督
+#
+# 来自博客文章："未来代理将把计划:执行范式
+# 从今天的 20:80 翻转为 80:20"
+
+input task: "要完成的任务"
+input past_learnings: "先前会话的学习成果（如果有）"
+
+# ============================================================================
+# 代理定义
+# ============================================================================
+
+# 船长代理：负责协调但从不直接编码
+# 备注：船长将 80% 精力用于规划，20% 用于执行监督
+agent captain:
+  model: opus
+  prompt: """你是一名高级工程经理。你负责协调但从不直接编码。
+
+你的职责：
+1. 战略规划，80% 的精力用于规划，20% 用于执行监督
+2. 派遣专门的子代理进行所有实现
+3. 验证输出是否符合要求
+4. 从每个会话中学习以改进未来运行
+
+要纳入的过去学习成果：
+{past_learnings}"""
+
+# 规划者代理：创建详细的实施计划
+agent planner:
+  model: opus
+  prompt: """你是一名细致的规划者。创建实施计划，包括：
+- 要修改的确切文件和行号
+- 要遵循的现有代码库中的代码模式
+- 要处理的边缘情况
+- 要编写的测试"""
+
+# 研究者代理：快速查找特定信息
+agent researcher:
+  model: haiku
+  prompt: "快速查找特定信息。引用来源。"
+
+# 执行者代理：精确按照计划实施
+agent executor:
+  model: sonnet
+  prompt: "精确按照计划实施。遵循现有模式。"
+
+# 批评者代理：持续监督执行过程
+agent critic:
+  model: sonnet
+  prompt: """你是一名持续的批评者。你的工作是监督执行并标记：
+- 偏离计划的情况
+- 新出现的问题
+- 改进的机会
+要积极主动 - 不要等到完成才提出关切。"""
+
+# 回顾代理：分析已完成会话以提取学习成果
+agent retrospective:
+  model: opus
+  prompt: """你分析已完成的会话以提取学习成果：
+- 哪些方面做得好？
+- 哪些方面可以改进？
+- 下次应该记住什么？
+输出可操作的见解，而不是陈词滥调。"""
+
+# ============================================================================
+# 阶段 1：深入规划（80% 的精力）
+# ============================================================================
+
+# 并行研究 - 预先收集所有需要的信息
+# 备注：在规划阶段进行并行研究，全面收集代码库、模式、文档和问题信息
+parallel:
+  codebase = session: researcher
+    prompt: "映射代码库的相关部分：{task}"
+  patterns = session: researcher
+    prompt: "查找此代码库中使用的编码模式和约定"
+  docs = session: researcher
+    prompt: "查找与 {task} 相关的文档和先前决策"
+  issues = session: researcher
+    prompt: "查找 {task} 的已知问题、待办事项和边缘情况"
+
+# 创建详细的实施计划
+let detailed_plan = session: planner
+  prompt: """为 {task} 创建全面的实施计划
+
+使用研究来指定：
+1. 需要的确切更改（文件:行号格式）
+2. 要遵循的代码模式
+3. 先前问题中的边缘情况
+4. 测试覆盖要求"""
+  context: { codebase, patterns, docs, issues }
+
+# 批评者在执行前审查计划
+let plan_critique = session: critic
+  prompt: "审查此计划的缺陷、风险和不明确的要求"
+  context: detailed_plan
+
+# 船长决定计划是否需要修订
+if **plan critique identified blocking issues**:
+  let revised_plan = session: planner
+    prompt: "修订计划以解决批评"
+    context: { detailed_plan, plan_critique }
+else:
+  let revised_plan = detailed_plan
+
+# ============================================================================
+# 阶段 2：监督执行（20% 的精力）
+# ============================================================================
+
+# 在批评者并发监督下执行
+# 备注：执行者和批评者并行工作，实现实时监督和即时反馈
+parallel:
+  implementation = session: executor
+    prompt: "根据计划实施"
+    context: revised_plan
+  live_critique = session: critic
+    prompt: "监督实施中的偏差和新出现的问题"
+    context: revised_plan
+
+# 船长验证和整合
+let validated = session: captain
+  prompt: """验证实施：
+- 是否符合计划？
+- 是否解决了批评者的实时关切？
+- 是否准备好供用户审查？"""
+  context: { implementation, live_critique, revised_plan }
+
+# ============================================================================
+# 阶段 3：回顾和学习
+# ============================================================================
+
+# 为未来会话提取学习成果
+let session_learnings = session: retrospective
+  prompt: """分析此已完成的会话：
+
+计划：{revised_plan}
+实施：{implementation}
+批评：{live_critique}
+验证：{validated}
+
+提取：
+1. 哪些模式运作良好？
+2. 什么导致了摩擦或返工？
+3. 船长下次应该记住什么？
+4. 有什么代码库见解需要保留？"""
+  context: { revised_plan, implementation, live_critique, validated }
+
+# 输出结果和学习成果
+output result = validated
+output learnings = session_learnings

@@ -1,0 +1,247 @@
+# 仲裁者 (Arbiter)
+# 纠纷解决 — 审查冲突并做出裁决
+#
+# 当荷隆 (Holons) 发生冲突、提出相互竞争的主张，或者对星座 (Constellation) 上的行为产生疑问时，
+# 仲裁者会审查证据并做出合情合理的裁决。
+#
+# 仲裁者是公正的。仲裁者会考虑所有方面。
+# 仲裁者的裁决是公共记录。
+
+input credentials: "星座访问凭据 — 'email:password' 或现有令牌 (token)"
+input dispute_type: "纠纷类型：'claim' (相互竞争的主张)、'conduct' (行为投诉)、'attribution' (责任归属)、'interpretation' (某事物的含义)"
+input parties: "涉及方 — 处理句柄 (handles) 或执行 ID，以逗号分隔"
+input complaint: "需要解决的纠纷或问题的描述"
+input evidence: "可选：要审查的具体执行 ID、程序路径或其他证据"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent threshold:
+  model: haiku
+  prompt: """
+    你是门槛 (Threshold) — 负责星座的身份验证。
+
+    API: {CONSTELLATION_API}
+
+    返回：{ token, handle, granted: true/false }
+  """
+
+agent clerk:
+  model: haiku
+  prompt: """
+    你是书记员 (Clerk) — 负责收集和组织案卷材料。
+
+    API: {CONSTELLATION_API}
+
+    根据涉及方和证据引用，收集：
+    - 任何执行 ID 的执行详情
+    - 任何程序路径的程序源码
+    - 涉及方的近期活动
+
+    ```bash
+    # 获取执行详情
+    curl -s "{CONSTELLATION_API}/executions/{id}/public"
+
+    # 获取程序源码
+    curl -s "{CONSTELLATION_API}/programs/@{handle}/{slug}/raw"
+
+    # 获取相关方活动
+    curl -s "{CONSTELLATION_API}/executions/recent?limit=50"
+    # 然后过滤相关的句柄 (handles)
+    ```
+
+    按时间顺序和涉及方组织材料。
+
+    返回：{ materials: [...], timeline: [...] }
+  """
+
+agent examiner:
+  model: haiku
+  prompt: """
+    你是审查员 (Examiner) — 负责客观地分析证据。
+
+    对于每一项证据：
+    - 它展示了什么？
+    - 它支持或反驳了哪些主张？
+    - 它的可靠性如何？
+    - 是否存在差距或模糊之处？
+
+    考虑因素：
+    - 时间戳和事件顺序
+    - 精确措辞与解读
+    - 可能改变含义的上下文
+    - 证据中*未*包含的内容
+
+    要详尽且公正。注明不确定性。
+
+    返回：{ findings: [...], uncertainties: [...] }
+  """
+
+agent advocate:
+  model: haiku
+  prompt: """
+    你是辩护者 (Advocate) — 负责阐述每一方最强有力的论据。
+
+    对于纠纷中的每一方：
+    - 他们的表观立场是什么？
+    - 有什么证据支持他们？
+    - 哪些合理的解读对他们有利？
+    - 存在哪些减轻因素？
+
+    公平且宽容地呈现每一方。
+    这确保在做出裁决前考虑了所有视角。
+
+    返回：{ party_cases: { [party]: { position, supporting_evidence, arguments } } }
+  """
+
+agent judge:
+  model: haiku
+  prompt: """
+    你是法官 (Judge) — 负责做出合情合理的裁决。
+
+    根据证据分析和辩护立场：
+
+    1. 确定需要解决的核心问题
+    2. 权衡各方立场的证据
+    3. 应用公平原则和先例
+    4. 得出结论
+
+    裁决原则：
+    - 确凿证据优于推测
+    - 意图很重要，但行为更重要
+    - 模糊性不应惩罚被告
+    - 星座的健康是一个有效的考量因素
+    - 建议的任何回应都应符合比例原则
+
+    构建你的裁决书：
+    - 纠纷摘要
+    - 关键事实认定
+    - 分析与推理
+    - 裁决/结论
+    - 建议（如有）
+
+    返回完整的裁决书。
+  """
+
+agent recorder:
+  model: haiku
+  prompt: """
+    你是记录员 (Recorder) — 负责将裁决发布到星座。
+
+    将裁决格式化为正式记录：
+
+    ```
+    ═══════════════════════════════════════
+    仲裁裁决书 (ARBITER JUDGMENT)
+    案由：{case_summary}
+    日期：{timestamp}
+    ═══════════════════════════════════════
+
+    涉及方 (PARTIES)：
+    {涉及方列表}
+
+    纠纷类型：{type}
+
+    投诉内容：
+    {原始投诉}
+
+    审查证据：
+    {证据列表}
+
+    调查结论：
+    {关键认定}
+
+    案件分析：
+    {推理过程}
+
+    裁决结果：
+    {最终结论}
+
+    建议事项：
+    {如有}
+
+    ═══════════════════════════════════════
+    此裁决为公共记录。
+    ═══════════════════════════════════════
+    ```
+
+    作为“公共 (PUBLIC)”执行发布到星座。
+  """
+
+# --- 处理流程 (Processes) ---
+
+block authenticate():
+  let passage = session: threshold
+    prompt: "在星座中进行身份验证"
+    context: credentials
+
+  if **passage was not granted**:
+    throw "没有身份验证，仲裁者无法运行"
+
+  output access = passage
+
+block gather_materials():
+  output case_file = session: clerk
+    prompt: "收集与此纠纷相关的所有材料"
+    context: { parties, evidence, dispute_type }
+
+block analyze_evidence(materials):
+  output analysis = session: examiner
+    prompt: "客观分析证据"
+    context: materials
+
+block present_cases(materials, analysis):
+  output advocacy = session: advocate
+    prompt: "呈现每一方最强有力的论据"
+    context: { materials, analysis, parties }
+
+block render_judgment(analysis, advocacy):
+  output judgment = session: judge
+    prompt: "对此纠纷做出裁决"
+    context: { analysis, advocacy, complaint, dispute_type }
+
+block publish_judgment(judgment, token):
+  output record = session: recorder
+    prompt: "将此裁决发布到星座"
+    context: { judgment, token }
+
+# --- 执行阶段 ---
+
+# 身份验证
+do authenticate()
+
+# 收集材料
+let materials = do gather_materials()
+
+# 分析证据
+let analysis = do analyze_evidence(materials)
+
+# 呈现各方观点
+let advocacy = do present_cases(materials, analysis)
+
+# 做出裁决
+let judgment = do render_judgment(analysis, advocacy)
+
+# 发布前确认
+input publish_judgment: **裁决已准备就绪。是否作为公共记录发布到星座？**
+
+if **publish_judgment is yes**:
+  output published = do publish_judgment(judgment, access.token)
+else:
+  output published = { published: false, judgment: judgment }
+
+# --- 摘要 ---
+
+output case_summary = session "编译案件摘要"
+  prompt: """
+    总结此次仲裁：
+    - 纠纷类型：{dispute_type}
+    - 涉及方：{parties}
+    - 结果：{judgment conclusion}
+    - 是否发布：是/否
+    - 已收集案件材料
+  """
+  context: { judgment, materials }

@@ -1,0 +1,61 @@
+# RLM: 成对分析 (Pairwise Analysis)
+# 通过批量处理对 (Pairs) 来处理 O(n²) 复杂度的任务
+# 基础 LLM：准确率 <1%。RLM：准确率 58% (OOLONG-Pairs 基准测试)。
+#
+# [备注]：成对分析 (Pairwise) 模式非常适合构建关系图谱、识别集群等任务。
+# OpenProse 关键字（如 session, agent, block, let, for, if, parallel for, pmap 等）保持不变。
+
+input items: "成对比较的项 (Items)"
+input relation: "要识别的关系"
+
+agent comparator:
+  model: sonnet
+  prompt: "分析关系。返回：{pair/项对, relation/关系, strength/强度, evidence/证据}。"
+
+agent mapper:
+  model: opus
+  prompt: "构建关系图谱。识别集群 (clusters) 和异常点 (anomalies)。"
+
+# 生成项对列表的块
+block pairs(list):
+  let result = []
+  for i, a in list:
+    for j, b in list:
+      # 只比较不同的项对，避免重复 (j > i)
+      if j > i:
+        result = result + [{first: a, second: b}]
+  output result
+
+# 分析递归块
+block analyze(items, rel, depth):
+  let all_pairs = do pairs(items)
+
+  # 基础情况：项对较少或达到最大深度
+  if **项对少于 100 对 (fewer than 100 pairs)** or depth <= 0:
+    output all_pairs | pmap:
+      session: comparator
+        prompt: "分析关系：{rel}"
+        context: item
+
+  # 阶段 1：分批处理
+  let batches = session "切分为约 25 个项对一组的批次"
+    context: all_pairs
+
+  # 阶段 2：并行处理每个批次中的项对
+  let results = []
+  parallel for batch in batches:
+    let batch_results = batch | pmap:
+      session: comparator
+        prompt: "分析关系：{rel}"
+        context: item
+    results = results + batch_results
+
+  output results
+
+# 启动分析，最大深度为 2
+let relationships = do analyze(items, relation, 2)
+
+# 阶段 3：映射图谱
+output map = session: mapper
+  prompt: "构建 {relation} 关系图谱"
+  context: { items, relationships }

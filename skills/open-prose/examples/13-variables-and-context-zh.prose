@@ -1,0 +1,58 @@
+# 示例 13：变量与上下文
+#
+# 此示例演示如何使用 let/const 绑定捕获会话输出，并将其作为上下文传递给后续会话。
+
+# 为工作流定义专门的代理
+# 备注：不同代理具有不同的专业领域，适合处理特定类型的任务
+agent researcher:
+  model: sonnet
+  prompt: "你是一名细致的研究助理，擅长收集关于主题的全面信息。"
+
+agent analyst:
+  model: opus
+  prompt: "你是一名数据分析师，擅长识别模式、趋势和关键见解。"
+
+agent writer:
+  model: opus
+  prompt: "你是一名技术文档编写者，擅长创建清晰、结构良好的文档。"
+
+# 步骤 1：收集初步研究（捕获到变量中）
+# 备注：使用 let 关键字将 session 输出绑定到变量，后续可以重复使用
+let research = session: researcher
+  prompt: "研究量子计算的当前状态，包括最近的突破、主要参与者和潜在应用。"
+
+# 步骤 2：分析研究结果（使用 research 作为上下文）
+# 备注：context 字段允许后续会话访问之前的结果，实现信息传递
+let analysis = session: analyst
+  prompt: "分析关键发现，确定最有前景的方向。"
+  context: research
+
+# 步骤 3：获取额外视角（刷新上下文）
+# 备注：context: [] 表示空上下文，让代理基于全新视角进行研究
+let market-trends = session: researcher
+  prompt: "研究量子计算的市场趋势和商业应用。"
+  context: []
+
+# 步骤 4：组合多个上下文进行最终综合
+# 备注：const 关键字创建不可变绑定，context 可以传递多个变量作为数组
+const report = session: writer
+  prompt: "撰写全面的执行摘要，涵盖研究、分析和市场趋势。"
+  context: [research, analysis, market-trends]
+
+# 步骤 5：使用变量重新分配进行迭代精炼
+# 备注：let 变量可以重新分配，实现迭代改进的工作流
+let draft = session: writer
+  prompt: "创建技术深入分析部分的初始草稿。"
+  context: research
+
+# 使用自己的输出作为上下文来精炼草稿
+# 备注：变量可以重新赋值，同时 context 可以引用同一变量（更新后的值）
+draft = session: writer
+  prompt: "审查和改进此草稿，提高清晰度和技术准确性。"
+  context: draft
+
+# 最终润色
+# 备注：这是迭代工作流的最后一步，展示多次精炼的过程
+draft = session: writer
+  prompt: "执行最终编辑审查并润色文档。"
+  context: draft

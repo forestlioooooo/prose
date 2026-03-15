@@ -1,0 +1,108 @@
+# 字符串插值示例
+# 演示使用 {variable} 语法进行动态提示构建
+
+# 基本插值
+# 备注：{variable} 语法允许将会话输出动态插入到后续提示中
+let user_name = session "获取用户的姓名"
+let topic = session "询问他们想要了解什么主题"
+
+session "为 {user_name} 创建关于 {topic} 的个性化问候"
+
+# 一个提示中的多次插值
+let company = session "获取公司名称"
+let industry = session "识别公司所属行业"
+let size = session "确定公司规模 (创业/中型/企业)"
+
+session "为 {company} 编写定制提案，这是一家位于 {industry} 行业的 {size} 公司"
+
+# 带有上下文的插值
+let research = session "深入研究该主题"
+
+session "基于研究，向 {user_name} 解释 {topic}"
+  context: research
+
+# 多行字符串中的插值
+# 备注：三个双引号语法允许定义多行字符串，其中可以包含插值变量
+let project = session "获取项目名称"
+let deadline = session "获取项目截止日期"
+let team_size = session "获取团队规模"
+
+session """
+为 {project} 创建项目计划。
+
+关键约束：
+- 截止日期：{deadline}
+- 团队规模：{team_size}
+
+包括里程碑和资源分配。
+"""
+
+# 循环中的插值
+let languages = ["Python", "JavaScript", "Go"]
+
+for lang in languages:
+  session "用 {lang} 编写 Hello World 程序"
+  session "解释 {lang} 的语法"
+
+# 并行块中的插值
+let regions = ["North America", "Europe", "Asia Pacific"]
+
+parallel for region in regions:
+  session "分析 {region} 的市场状况"
+  session "识别 {region} 的顶级竞争对手"
+
+# 带有计算值的插值
+let base_topic = session "获取主要主题"
+let analysis = session "从多个角度分析 {base_topic}"
+
+let subtopics = ["history", "current state", "future trends"]
+for subtopic in subtopics:
+  session "探索 {base_topic} 的 {subtopic}"
+    context: analysis
+
+# 构建动态工作流
+let workflow_type = session "我们应该创建什么类型的文档？"
+let audience = session "目标受众是谁？"
+let length = session "文档应该多长？"
+
+session """
+为 {audience} 创建 {workflow_type}。
+
+要求：
+- 长度：大约 {length}
+- 语气：适合 {audience}
+- 重点：实用且可操作
+
+请使用清晰的部分进行结构化。
+"""
+
+# 错误消息中的插值
+let operation = session "获取操作名称"
+let target = session "获取目标资源"
+
+try:
+  session "在 {target} 上执行 {operation}"
+catch:
+  session "在 {target} 上执行 {operation} 失败 - 尝试恢复"
+  throw "操作 {operation} 对 {target} 失败"
+
+# 结合插值和选择块
+let task_type = session "识别任务类型"
+let priority = session "确定任务优先级"
+
+choice **the best approach for a {priority} priority {task_type}**:
+  option "Immediate action":
+    session "以 {priority} 优先级处理立即执行 {task_type}"
+  option "Scheduled action":
+    session "基于 {priority} 优先级队列安排 {task_type}"
+  option "Delegate":
+    session "将 {task_type} 分配给适当的团队成员"
+
+# 代理定义中的插值
+# 备注：agent 定义中的 prompt 字段也可以使用插值，创建动态配置的代理
+agent custom_agent:
+  model: sonnet
+  prompt: "你专门帮助处理 {topic}"
+
+session: custom_agent
+  prompt: "为 {user_name} 提供关于 {topic} 的专家指导"

@@ -1,0 +1,214 @@
+# Registry (注册表)
+# 浏览、搜索并从“星座”(Constellation) 注册表中获取程序
+#
+# Registry 是“星座”的图书馆 —— 包含由“荷隆”(Holon) 发布供他人使用、
+# 学习和构建的公开程序。
+#
+# 本程序提供结构化的访问方式，以探索现有的内容。
+
+input mode: "浏览模式：'featured' (精选), 'browse' (浏览), 'fetch' (获取), 或 'by-owner' (按所有者)"
+input query: "对于 'fetch'：@handle/slug 路径。对于 'by-owner'：作者 handle。对于 'browse'：可选关键词。"
+input max_results: "要返回的最大结果数 (默认 20)"
+input include_source: "浏览时是否获取完整源代码 (默认 false)"
+
+# --- 常量 ---
+
+const CONSTELLATION_API = "https://api-v2.prose.md"
+
+# --- 职能代理 (Faculties) ---
+
+agent browser:
+  model: haiku
+  prompt: """
+    你是 Browser (浏览器) —— 负责导航程序注册表。
+
+    API: {CONSTELLATION_API}
+
+    精选 (FEATURED) 模式:
+      GET /programs/featured?limit={max_results}
+      返回最近创建的公开程序
+
+    浏览 (BROWSE) 模式:
+      GET /programs/public?limit={max_results}&offset=0
+      如果提供了查询字符串 (query)，则过滤名称、描述或 owner.handle 
+      包含该字符串的结果 (不区分大小写)
+
+    按所有者 (BY-OWNER) 模式:
+      GET /programs/public?limit=50
+      过滤 owner.handle 与查询字符串完全匹配或包含该字符串的结果
+
+    编写一个 Node.js 脚本来获取数据。不需要身份验证。
+
+    返回程序列表，包含以下信息:
+    - 路径 (path，格式为 @handle/slug)
+    - 名称 (name)
+    - 描述 (description)
+    - 作者 handle (owner.handle)
+    - 作者显示名称 (owner.displayName)
+    - 创建时间 (createdAt)
+    - 更新时间 (updatedAt)
+  """
+
+agent fetcher:
+  model: haiku
+  prompt: """
+    你是 Fetcher (获取器) —— 负责通过路径检索特定程序。
+
+    API: {CONSTELLATION_API}
+
+    给定一个程序路径 (例如 @handle/slug 或 handle/slug):
+
+    1. 规范化路径:
+       - 如果以 @ 开头，直接使用
+       - 否则，在前面加上 @
+
+    2. GET /programs/{path}
+       返回程序元数据
+
+    3. 如果 include_source 为 true 或这是一个直接获取操作:
+       GET /programs/{path}/raw
+       返回原始的 .prose 源代码
+
+    编写一个 Node.js 脚本来获取程序。
+
+    返回:
+    - 路径 (path)
+    - 名称 (name)
+    - 描述 (description)
+    - 作者 handle (owner.handle)
+    - 作者显示名称 (owner.displayName)
+    - 创建时间 (createdAt)
+    - 更新时间 (updatedAt)
+    - 源码 (source，如果已获取则返回完整程序文本)
+  """
+
+agent presenter:
+  model: haiku
+  prompt: """
+    你是 Presenter (演示者) —— 负责格式化注册表数据以便查看。
+
+    针对 FEATURED/BROWSE/BY-OWNER 模式:
+
+    ```
+    注册表 (Registry): {mode}
+    {查询内容，如有: query}
+    结果数量: {count}
+
+    ═══════════════════════════════════════
+
+    1. {path}
+       名称: {name}
+       作者: @{owner.handle}
+
+       {描述，若无则显示 "无描述": description}
+
+       创建于: {createdAt}
+       更新于: {updatedAt}
+
+    ───────────────────────────────────────
+
+    2. ...
+    ```
+
+    针对 FETCH 模式 (单个程序):
+
+    ```
+    程序路径: {path}
+
+    名称: {name}
+    作者: @{owner.handle} ({displayName})
+    创建于: {createdAt}
+    更新于: {updatedAt}
+
+    描述:
+    {描述，若无则显示 "未提供描述": description}
+
+    ═══════════════════════════════════════
+
+    {如果包含源码:}
+    源码 (Source):
+    ```prose
+    {source}
+    ```
+
+    {否则:}
+    要获取源码，请运行: prose run common/registry.prose mode=fetch query={path} include_source=true
+    ```
+
+    如果未找到结果，请建议:
+    - 检查路径/handle 的拼写是否正确
+    - 尝试 'featured' 模式查看近期程序
+    - 尝试 'browse' 模式并配合关键词
+  """
+
+agent analyzer:
+  model: haiku
+  prompt: """
+    你是 Analyst (分析师) —— 负责提供有关发现的程序的见解。
+
+    当浏览结果返回时，请分析:
+
+    - 程序名称或描述中的共同模式
+    - 活跃作者 (如果同一 handle 下有多个程序)
+    - 程序类别 (如果可以辨认)
+    - 时间分布 (近期 vs 较早的程序)
+
+    保持分析简短 —— 最多 2-3 条观察。
+  """
+
+# --- 过程 (Processes) ---
+
+block browse_registry():
+  output programs = session: browser
+    prompt: "以 {mode} 模式浏览注册表"
+    context: { mode, query, max_results }
+
+block fetch_program():
+  output program = session: fetcher
+    prompt: "获取位于 {query} 的程序"
+    context: { query, include_source }
+
+block present_results(data):
+  output report = session: presenter
+    prompt: "展示注册表结果"
+    context: { data, mode, query, include_source }
+
+block analyze_results(data):
+  output insights = session: analyzer
+    prompt: "分析找到的程序"
+    context: data
+
+# --- 注册表操作 ---
+
+if mode 为 "fetch":
+  # 直接获取特定程序
+  let program = do fetch_program()
+  output registry_results = do present_results(program)
+
+else:
+  # 浏览模式：featured, browse, by-owner
+  let programs = do browse_registry()
+  output registry_results = do present_results(programs)
+
+  # 对于浏览模式，可选择进行分析
+  if **找到多于 3 个程序**:
+    output registry_insights = do analyze_results(programs)
+
+# --- 后续步骤 ---
+
+output next_steps = session "建议操作"
+  prompt: """
+    根据注册表结果，建议相关的后续操作：
+
+    如果找到了程序：
+    - 运行程序: prose run {path}
+    - 审计程序: prose run common/auditor.prose target={path}
+    - 查看该作者的更多作品: prose run common/registry.prose mode=by-owner query={handle}
+
+    如果是浏览模式：
+    - 获取完整源码: prose run common/registry.prose mode=fetch query={path} include_source=true
+    - 搜索执行实例: prose run common/seeker.prose search_type=owner query={handle}
+
+    根据上下文格式化 2-3 条最相关的建议。
+  """
+  context: { mode, query, registry_results }

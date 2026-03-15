@@ -1,0 +1,90 @@
+# 选择块示例
+# 演示基于运行时标准的 AI 选择分支
+
+# 基于分析的简单选择
+# 备注：choice 块允许 AI 根据运行时评估选择不同的执行路径
+let analysis = session "分析当前代码库质量"
+
+choice **the severity of issues found**:
+  option "Critical":
+    session "停止所有工作，立即修复关键问题"
+      context: analysis
+    session "创建事件报告"
+  option "Moderate":
+    session "安排在下个冲刺中修复"
+      context: analysis
+  option "Minor":
+    session "添加到技术债务待办列表"
+      context: analysis
+
+# 针对用户体验水平的选择
+# 备注：AI 根据上下文（如用户问题）评估用户技术水平，选择相应回答策略
+choice **the user's technical expertise based on their question**:
+  option "Beginner":
+    session "从基本原理解释概念"
+    session "提供逐步教程"
+    session "包含有用的类比"
+  option "Intermediate":
+    session "提供简洁的解释和示例"
+    session "链接到相关文档"
+  option "Expert":
+    session "提供技术深入分析"
+    session "包含高级配置选项"
+
+# 针对项目方法的选择
+let requirements = session "收集项目需求"
+
+choice **the best development approach given the requirements**:
+  option "Rapid prototype":
+    session "创建专注于核心功能的快速 MVP"
+      context: requirements
+    session "规划迭代周期"
+  option "Production-ready":
+    session "设计完整的架构"
+      context: requirements
+    session "设置 CI/CD 流水线"
+    session "实现完整的测试覆盖"
+  option "Research spike":
+    session "探索技术可行性"
+      context: requirements
+    session "记录发现和建议"
+
+# 多行标准用于复杂决策
+# 备注：***...*** 语法允许定义多行评估标准，提供更详细的决策上下文
+let market_data = session "收集市场研究数据"
+let tech_analysis = session "分析技术格局"
+
+choice ***
+  the optimal market entry strategy
+  considering both market conditions
+  and technical readiness
+***:
+  option "Aggressive launch":
+    session "准备立即进入市场"
+      context: [market_data, tech_analysis]
+  option "Soft launch":
+    session "规划有限的 Beta 版本发布"
+      context: [market_data, tech_analysis]
+  option "Wait and iterate":
+    session "继续开发并监控市场"
+      context: [market_data, tech_analysis]
+
+# 用于详细决策树的嵌套选择
+# 备注：嵌套 choice 块支持复杂的层次化决策逻辑
+let request = session "分析传入的客户请求"
+
+choice **the type of request**:
+  option "Technical support":
+    choice **the complexity of the technical issue**:
+      option "Simple":
+        session "提供自助解决方案"
+          context: request
+      option "Complex":
+        session "升级到高级工程师"
+          context: request
+  option "Sales inquiry":
+    session "转发给销售团队并附上上下文"
+      context: request
+  option "Feature request":
+    session "添加到产品待办列表并通知产品经理"
+      context: request

@@ -1,0 +1,42 @@
+# 交互式导师 (Interactive Tutor)
+#
+# 一个展示 `input` 原语 (primitive) 的简单交互式程序。
+# VM 会在每个 `input` 语句处暂停以收集用户响应，
+# 然后将这些值传递给后续会话。
+#
+# 用法：
+#   prose run examples/50-interactive-tutor.prose
+#
+# [备注]：OpenProse 关键字（如 input, let, session, choice 等）保持不变。
+
+# 第一次输入：获取用户名
+input name: "你叫什么名字？"
+
+# 使用用户名向用户问好
+let greeting = session "热情地向 {name} 问好，并询问他们今天想学习什么。"
+
+# 第二次输入：获取主题（程序运行中途）
+input topic: **你想学习什么主题？**
+
+# 第三次输入：获取他们的经验水平
+input level: "对于 {topic}，你的经验水平如何？（入门、中级、高级）"
+
+# 生成个性化解释
+let explanation = session "以 {level} 水平向 {name} 解释 {topic}。"
+  prompt: """针对 {level} 水平的用户，给出一个清晰且引人入胜的 {topic} 解释。
+直接称呼他们的名字 ({name})。保持在 2-3 个段落以内。"""
+
+# 第四次输入：检查他们是否想深入学习
+input go_deeper: **{name} 是否想要更深入的学习或练习题？**
+
+# 根据他们的选择做出响应
+choice **{name} 的请求内容**:
+  option "更深入的解释 (deeper explanation)":
+    output followup = session "为 {name} 提供关于 {topic} 的深入探讨。"
+      context: explanation
+  option "练习题 (practice exercises)":
+    output followup = session "为 {topic} 的 {level} 水平创建 3 道练习题。"
+      context: explanation
+  option "已满意 (satisfied)":
+    output followup = session "总结 {name} 所学到的关于 {topic} 的内容，并向他们道别。"
+      context: explanation

@@ -1,0 +1,46 @@
+# 简单船长椅模式
+#
+# 最小化的船长椅模式：一个协调代理，派遣子代理执行所有任务。
+# 船长只负责规划和验证，不直接执行。
+
+input task: "要完成什么任务"
+
+# 船长协调但从不执行
+# 备注：船长椅模式的核心原则 - 船长代理负责协调，但从不直接编写代码
+agent captain:
+  model: opus
+  prompt: "你是一个项目协调员。从不直接编写代码。分解任务，派遣给专家，验证结果。"
+
+agent executor:
+  model: opus
+  prompt: "你是一个熟练的实施者。精确执行分配的任务。"
+
+agent critic:
+  model: opus
+  prompt: "你是一名批评者。发现问题，提出改进建议。要彻底。"
+
+# 步骤 1：船长创建计划
+# 备注：船长将复杂任务分解为离散的工作项，为后续执行做准备
+let plan = session: captain
+  prompt: "将此任务分解为工作项：{task}"
+
+# 步骤 2：派遣并行执行
+# 备注：并行派遣执行者和批评者，同时进行工作和审查，提高效率
+parallel:
+  work = session: executor
+    prompt: "执行计划"
+    context: plan
+  review = session: critic
+    prompt: "识别此方法的潜在问题"
+    context: plan
+
+# 步骤 3：船长综合和验证
+# 备注：AI 评估批评者是否发现了影响工作的问题，决定不同的综合策略
+if **critic found issues that affect the work**:
+  output result = session: captain
+    prompt: "在解决批评者关切的同时整合工作"
+    context: { work, review }
+else:
+  output result = session: captain
+    prompt: "验证并总结完成的工作"
+    context: { work, review }
